@@ -68,7 +68,7 @@ class EncoderClient:
 
 
 def contacts_as_strings(physics) -> list[str]:
-    from sim_env import contact_pairs
+    from sim_tasks import contact_pairs
 
     return sorted("|".join(sorted(pair)) for pair in contact_pairs(physics))
 

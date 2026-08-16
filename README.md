@@ -202,6 +202,13 @@ See [External task-policy integration](docs/EXTERNAL_POLICIES.md) for:
 - visual, state, and external speed-policy observations;
 - the archival learned-policy configuration and ablations.
 
+## Segment-independent reference alignment
+
+The experimental [online reference-alignment probe](docs/REFERENCE_ALIGNMENT.md)
+maps causal video clips to a continuous position in one reference execution.
+It keeps visual correspondence separate from editable segment and playback-speed
+metadata; changing a segment boundary requires no model retraining.
+
 ## Commands
 
 | Command | Purpose |

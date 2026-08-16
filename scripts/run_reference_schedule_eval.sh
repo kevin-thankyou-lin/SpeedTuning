@@ -10,6 +10,7 @@ output_root=$1
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 encoder_python=${ENCODER_PYTHON:-/home/gear/Projects/gr00t/.venv/bin/python}
 sim_python=${SIM_PYTHON:-/home/gear/Projects/SpeedTuning-official-20260813/.venv/bin/python}
+encoder_device=${ENCODER_DEVICE:-cpu}
 socket_path="$output_root/rn18.sock"
 ready_path="$output_root/rn18-ready.json"
 mkdir -p "$output_root"
@@ -22,10 +23,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+OMP_NUM_THREADS=${ENCODER_THREADS:-4} MKL_NUM_THREADS=${ENCODER_THREADS:-4} \
 "$encoder_python" "$repo_root/scripts/serve_rn18_embeddings.py" \
   --socket "$socket_path" \
   --ready "$ready_path" \
-  --device cuda \
+  --device "$encoder_device" \
   >"$output_root/encoder.log" 2>"$output_root/encoder.err" &
 encoder_pid=$!
 
@@ -38,7 +40,7 @@ done
 
 run_task() {
   local task=$1 controller=$2 runtime=$3 refs=$4 tests=$5 margin=$6
-  "$sim_python" "$repo_root/scripts/evaluate_reference_aligned_schedule.py" \
+  MUJOCO_GL=${MUJOCO_GL:-egl} "$sim_python" "$repo_root/scripts/evaluate_reference_aligned_schedule.py" \
     --task "$task" \
     --controller "$controller" \
     --runtime-root "$runtime" \

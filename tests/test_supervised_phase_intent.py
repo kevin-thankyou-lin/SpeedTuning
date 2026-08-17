@@ -10,6 +10,11 @@ from scripts.train_supervised_phase_intent import (
     temporal_features,
     warp_sequence,
 )
+from supervised_phase_controller import (
+    CausalTemporalFeatureBuffer,
+    ConservativeBinaryDecoder,
+    shared_fast_speed,
+)
 
 
 def test_warp_sequence_keeps_causal_labels():
@@ -104,3 +109,45 @@ def test_ordered_phase_metrics_report_early_advance_and_no_backward_jump():
     assert score["false_advance_rate"] == 0.25
     assert score["mean_absolute_phase_error"] == 0.25
     assert score["backward_jumps"] == 0
+
+
+def test_online_temporal_buffer_matches_batch_features():
+    values = np.arange(30, dtype=np.float32).reshape(10, 3)
+    expected = temporal_features(values)
+    buffer = CausalTemporalFeatureBuffer()
+    actual = np.stack([buffer.update(value) for value in values])
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_stateful_online_decoder_matches_batch_decoder():
+    classes = np.asarray(["fast", "segment_0", "segment_1"])
+    probabilities = np.asarray(
+        [
+            [0.9, 0.05, 0.05],
+            [0.4, 0.5, 0.1],
+            [0.1, 0.2, 0.7],
+            [0.8, 0.1, 0.1],
+            [0.85, 0.1, 0.05],
+        ]
+    )
+    expected = conservative_decode(
+        probabilities,
+        classes,
+        risk_threshold=0.45,
+        exit_threshold=0.75,
+        exit_stability=2,
+    )
+    decoder = ConservativeBinaryDecoder(
+        classes,
+        risk_threshold=0.45,
+        exit_threshold=0.75,
+        exit_stability=2,
+    )
+    actual = np.asarray([decoder.update(row) for row in probabilities])
+    np.testing.assert_array_equal(actual, expected)
+
+
+def test_shared_fast_mapping_collapses_protected_segment_speeds():
+    assert shared_fast_speed("fast", fast_speed=2.0, protected_speed=1.0) == 2.0
+    assert shared_fast_speed("segment_0", fast_speed=2.0, protected_speed=1.0) == 1.0
+    assert shared_fast_speed("segment_1", fast_speed=2.0, protected_speed=1.0) == 1.0

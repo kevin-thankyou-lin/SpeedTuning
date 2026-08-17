@@ -1,5 +1,6 @@
 import numpy as np
 
+from scripts.evaluate_privileged_segment_schedule import summarize_privileged
 from scripts.summarize_supervised_shared_fast import audit_result
 
 from scripts.train_supervised_phase_intent import (
@@ -205,6 +206,23 @@ def test_shared_fast_audit_distinguishes_false_fast_and_safe_segment_swap():
     assert audit["protected_recall"] == 0.5
     assert audit["protected_segment_exact_accuracy"] == 0.0
     assert audit["speed_choice_accuracy"] == 1 / 3
+
+
+def test_privileged_summary_uses_cached_matched_native_duration():
+    native = [
+        {"seed": 1, "success": True, "physics_steps": 400},
+        {"seed": 2, "success": True, "physics_steps": 400},
+    ]
+    candidate = [
+        {"seed": 1, "success": True, "physics_steps": 200, "mean_speed": 2.0},
+        {"seed": 2, "success": False, "physics_steps": 250, "mean_speed": 1.6},
+    ]
+    summary = summarize_privileged(native, candidate)
+    assert summary["native_1x_success_rate"] == 1.0
+    assert summary["candidate_success_rate"] == 0.5
+    assert summary["duration_normalized_speedup"] == 400 / 225
+    assert summary["cached_native_rollouts"] == 2
+    assert summary["new_candidate_rollouts"] == 2
 
 
 def test_shared_fast_mapping_collapses_protected_segment_speeds():

@@ -57,6 +57,12 @@ class PortableStandardizedLogisticRegression:
         probabilities = np.exp(logits)
         return probabilities / probabilities.sum(axis=1, keepdims=True)
 
+    @property
+    def classes_(self) -> np.ndarray:
+        """Expose the sklearn-compatible fitted class attribute."""
+
+        return self.classes
+
 
 class CausalTemporalFeatureBuffer:
     """Match ``temporal_features`` one observation at a time."""

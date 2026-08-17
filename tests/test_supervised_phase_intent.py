@@ -167,3 +167,4 @@ def test_portable_multiclass_logistic_regression_probabilities():
     expected = np.exp(logits - logits.max(axis=1, keepdims=True))
     expected /= expected.sum(axis=1, keepdims=True)
     np.testing.assert_allclose(probabilities, expected)
+    np.testing.assert_array_equal(model.classes_, model.classes)

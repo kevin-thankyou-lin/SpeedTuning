@@ -4,6 +4,9 @@ from scripts.train_supervised_phase_intent import (
     binary_metrics,
     compose_features,
     conservative_decode,
+    labels_for_records,
+    monotonic_phase_decode,
+    ordered_phase_metrics,
     temporal_features,
     warp_sequence,
 )
@@ -64,3 +67,40 @@ def test_binary_metrics_penalize_false_fast():
     )
     assert result["protected_recall"] == 0.5
     assert result["false_fast_rate"] == 0.5
+
+
+def test_reward_phase4_labels_clip_terminal_rewards():
+    records = [{"task_reward": value} for value in (0.0, 1.0, 2.0, 3.0, 4.0)]
+    np.testing.assert_array_equal(
+        labels_for_records(records, "reward-phase4"),
+        np.asarray(["phase_1", "phase_2", "phase_3", "phase_4", "phase_4"]),
+    )
+
+
+def test_monotonic_phase_decoder_advances_one_phase_at_a_time():
+    classes = np.asarray(["phase_1", "phase_2", "phase_3", "phase_4"])
+    probabilities = np.asarray(
+        [
+            [0.9, 0.1, 0.0, 0.0],
+            [0.1, 0.8, 0.1, 0.0],
+            [0.0, 0.1, 0.8, 0.1],
+            [0.0, 0.0, 0.1, 0.9],
+        ]
+    )
+    prediction = monotonic_phase_decode(
+        probabilities,
+        classes,
+        advance_threshold=0.5,
+        advance_stability=1,
+    )
+    np.testing.assert_array_equal(prediction, classes)
+    assert np.all(np.diff([int(value[-1]) for value in prediction]) >= 0)
+
+
+def test_ordered_phase_metrics_report_early_advance_and_no_backward_jump():
+    truth = [np.asarray(["phase_1", "phase_2", "phase_3", "phase_4"])]
+    prediction = [np.asarray(["phase_1", "phase_3", "phase_3", "phase_4"])]
+    score = ordered_phase_metrics(truth, prediction)
+    assert score["false_advance_rate"] == 0.25
+    assert score["mean_absolute_phase_error"] == 0.25
+    assert score["backward_jumps"] == 0

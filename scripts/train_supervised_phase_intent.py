@@ -106,6 +106,41 @@ def binary_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     }
 
 
+def labels_for_records(records: list[dict], mode: str) -> np.ndarray:
+    if mode == "oracle-risk":
+        return np.asarray([record["oracle_label"] for record in records])
+    if mode == "reward-phase4":
+        return np.asarray(
+            [f"phase_{min(4, int(float(record['task_reward'])) + 1)}" for record in records]
+        )
+    raise ValueError(mode)
+
+
+def ordered_phase_metrics(truth: list[np.ndarray], prediction: list[np.ndarray]) -> dict:
+    y_true = concatenate_sequences(truth)
+    y_pred = concatenate_sequences(prediction)
+    true_index = np.asarray([int(value.rsplit("_", 1)[1]) for value in y_true])
+    pred_index = np.asarray([int(value.rsplit("_", 1)[1]) for value in y_pred])
+    delta = pred_index - true_index
+    backward_jumps = 0
+    transitions = 0
+    for sequence in prediction:
+        index = np.asarray([int(value.rsplit("_", 1)[1]) for value in sequence])
+        if len(index) > 1:
+            backward_jumps += int(np.sum(np.diff(index) < 0))
+            transitions += len(index) - 1
+    return {
+        "frames": int(len(y_true)),
+        "mean_absolute_phase_error": float(np.mean(np.abs(delta))),
+        "p90_absolute_phase_error": float(np.percentile(np.abs(delta), 90)),
+        "false_advance_rate": float(np.mean(delta > 0)),
+        "severe_advance_rate": float(np.mean(delta >= 2)),
+        "late_phase_rate": float(np.mean(delta < 0)),
+        "backward_jumps": backward_jumps,
+        "backward_jump_rate": 0.0 if transitions == 0 else float(backward_jumps / transitions),
+    }
+
+
 def conservative_decode(
     probabilities: np.ndarray,
     classes: np.ndarray,
@@ -137,6 +172,31 @@ def conservative_decode(
                 active = None
                 fast_streak = 0
         output.append("fast" if active is None else classes[active])
+    return np.asarray(output)
+
+
+def monotonic_phase_decode(
+    probabilities: np.ndarray,
+    classes: np.ndarray,
+    *,
+    advance_threshold: float,
+    advance_stability: int,
+) -> np.ndarray:
+    ordered = np.asarray(sorted(classes, key=lambda value: int(value.rsplit("_", 1)[1])))
+    class_index = {value: int(np.flatnonzero(classes == value)[0]) for value in ordered}
+    active = 0
+    advance_streak = 0
+    output = []
+    for row in probabilities:
+        later_probability = float(sum(row[class_index[value]] for value in ordered[active + 1 :]))
+        if active < len(ordered) - 1 and later_probability >= advance_threshold:
+            advance_streak += 1
+            if advance_streak >= advance_stability:
+                active += 1
+                advance_streak = 0
+        else:
+            advance_streak = 0
+        output.append(ordered[active])
     return np.asarray(output)
 
 
@@ -197,6 +257,42 @@ def tune_decoder(model, sequences, labels):
     return selected, candidates
 
 
+def tune_phase_decoder(model, sequences):
+    candidates = []
+    for threshold in (0.25, 0.4, 0.55, 0.7):
+        for stability in (1, 2, 3):
+            truth = []
+            prediction = []
+            for x, y in sequences:
+                pred = monotonic_phase_decode(
+                    model.predict_proba(x),
+                    model.classes_,
+                    advance_threshold=threshold,
+                    advance_stability=stability,
+                )
+                truth.append(y)
+                prediction.append(pred)
+            candidates.append(
+                {
+                    "advance_threshold": threshold,
+                    "advance_stability": stability,
+                    **ordered_phase_metrics(truth, prediction),
+                }
+            )
+    eligible = [item for item in candidates if item["false_advance_rate"] <= 0.01]
+    if eligible:
+        selected = min(
+            eligible,
+            key=lambda item: (item["mean_absolute_phase_error"], item["late_phase_rate"]),
+        )
+    else:
+        selected = min(
+            candidates,
+            key=lambda item: (item["false_advance_rate"], item["mean_absolute_phase_error"]),
+        )
+    return selected, candidates
+
+
 def evaluate_model(model, sequences, decoder, labels):
     truth = []
     raw = []
@@ -234,6 +330,40 @@ def evaluate_model(model, sequences, decoder, labels):
     }
 
 
+def evaluate_phase_model(model, sequences, decoder, labels):
+    truth = []
+    raw = []
+    causal = []
+    by_speed = {}
+    for seed, speed, x, y in sequences:
+        raw_pred = model.predict(x)
+        causal_pred = monotonic_phase_decode(
+            model.predict_proba(x),
+            model.classes_,
+            advance_threshold=decoder["advance_threshold"],
+            advance_stability=decoder["advance_stability"],
+        )
+        truth.append(y)
+        raw.append(raw_pred)
+        causal.append(causal_pred)
+        by_speed.setdefault(str(speed), {"truth": [], "prediction": []})
+        by_speed[str(speed)]["truth"].append(y)
+        by_speed[str(speed)]["prediction"].append(causal_pred)
+    return {
+        "raw_multiclass": metrics(
+            concatenate_sequences(truth), concatenate_sequences(raw), labels
+        ),
+        "causal_multiclass": metrics(
+            concatenate_sequences(truth), concatenate_sequences(causal), labels
+        ),
+        "causal_ordered": ordered_phase_metrics(truth, causal),
+        "causal_by_speed": {
+            speed: ordered_phase_metrics(item["truth"], item["prediction"])
+            for speed, item in by_speed.items()
+        },
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=Path, required=True)
@@ -246,6 +376,11 @@ def main() -> int:
     parser.add_argument("--final-videos", type=int, default=10)
     parser.add_argument("--augmentations", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--label-mode",
+        choices=("oracle-risk", "reward-phase4"),
+        default="oracle-risk",
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -258,7 +393,20 @@ def main() -> int:
     train_seeds = successful[: args.train_videos]
     validation_seeds = successful[args.train_videos : args.train_videos + args.validation_videos]
     final_seeds = successful[args.train_videos + args.validation_videos : required]
-    labels = sorted({record["oracle_label"] for seed in successful for record in episodes[seed]})
+    labels = sorted(
+        {
+            label
+            for seed in successful
+            for label in labels_for_records(episodes[seed], args.label_mode)
+        }
+    )
+    if args.label_mode == "reward-phase4" and labels != [
+        "phase_1",
+        "phase_2",
+        "phase_3",
+        "phase_4",
+    ]:
+        raise RuntimeError(f"reward-phase4 requires all four phases, found {labels}")
 
     model, preprocess, weights = build_encoder(args.device)
     action_bank = np.load(args.action_features)
@@ -291,7 +439,7 @@ def main() -> int:
         train_x = []
         train_y = []
         for seed in train_seeds:
-            y = np.asarray([record["oracle_label"] for record in episodes[seed]])
+            y = labels_for_records(episodes[seed], args.label_mode)
             for speed in (1, 2, 3):
                 x, warped_y = warped_features(
                     method,
@@ -315,7 +463,7 @@ def main() -> int:
 
         validation_sequences = []
         for seed in validation_seeds:
-            y = np.asarray([record["oracle_label"] for record in episodes[seed]])
+            y = labels_for_records(episodes[seed], args.label_mode)
             for speed in (1, 2, 3):
                 x, warped_y = warped_features(
                     method,
@@ -325,11 +473,14 @@ def main() -> int:
                     speed,
                 )
                 validation_sequences.append((x, warped_y))
-        decoder, candidates = tune_decoder(classifier, validation_sequences, labels)
+        if args.label_mode == "reward-phase4":
+            decoder, candidates = tune_phase_decoder(classifier, validation_sequences)
+        else:
+            decoder, candidates = tune_decoder(classifier, validation_sequences, labels)
 
         final_sequences = []
         for seed in final_seeds:
-            y = np.asarray([record["oracle_label"] for record in episodes[seed]])
+            y = labels_for_records(episodes[seed], args.label_mode)
             for speed in (1, 2, 3):
                 x, warped_y = warped_features(
                     method,
@@ -339,7 +490,10 @@ def main() -> int:
                     speed,
                 )
                 final_sequences.append((seed, speed, x, warped_y))
-        final = evaluate_model(classifier, final_sequences, decoder, labels)
+        if args.label_mode == "reward-phase4":
+            final = evaluate_phase_model(classifier, final_sequences, decoder, labels)
+        else:
+            final = evaluate_model(classifier, final_sequences, decoder, labels)
         model_path = args.output / f"{method}.pkl"
         with model_path.open("wb") as handle:
             pickle.dump(classifier, handle)
@@ -352,7 +506,7 @@ def main() -> int:
         }
 
     result = {
-        "schema": "speedtuning-supervised-phase-intent-v1",
+        "schema": "speedtuning-supervised-phase-intent-v2",
         "task": manifest["task"],
         "frozen_backbone": "ImageNet ResNet18",
         "backbone_trainable": False,
@@ -363,15 +517,29 @@ def main() -> int:
         "validation_seeds": validation_seeds,
         "final_seeds": final_seeds,
         "labels": labels,
+        "label_mode": args.label_mode,
+        "label_definition": (
+            "phase_k := clipped integer task reward k-1; offline privileged labels only"
+            if args.label_mode == "reward-phase4"
+            else "existing causal-search protected segments"
+        ),
         "results": results,
         "dataset_manifest_sha256": sha256(args.dataset / "manifest.json"),
         "action_features_sha256": sha256(args.action_features),
         "elapsed_seconds": time.perf_counter() - started,
-        "acceptance_gate": {
-            "protected_recall_min": 0.99,
-            "false_fast_rate_max": 0.01,
-            "evaluated_on": "10 untouched trajectories at 1x, 2x, and 3x subsampling",
-        },
+        "acceptance_gate": (
+            {
+                "false_advance_rate_max": 0.01,
+                "balanced_accuracy_min": 0.90,
+                "evaluated_on": "10 untouched trajectories at 1x, 2x, and 3x subsampling",
+            }
+            if args.label_mode == "reward-phase4"
+            else {
+                "protected_recall_min": 0.99,
+                "false_fast_rate_max": 0.01,
+                "evaluated_on": "10 untouched trajectories at 1x, 2x, and 3x subsampling",
+            }
+        ),
     }
     result_path = args.output / "results.json"
     result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
@@ -381,7 +549,11 @@ def main() -> int:
             {
                 "task": manifest["task"],
                 "final": {
-                    method: item["final"]["conservative_binary"]
+                    method: item["final"][
+                        "causal_ordered"
+                        if args.label_mode == "reward-phase4"
+                        else "conservative_binary"
+                    ]
                     for method, item in results.items()
                 },
             },

@@ -6,14 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import pickle
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -22,11 +20,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from policy_speed_env import create_speed_env  # noqa: E402
 from scripts.capture_phase_dataset import OfflinePhaseOracle, snapshot  # noqa: E402
+from scripts.evaluate_reference_aligned_schedule import EncoderClient  # noqa: E402
 from scripts.extract_scripted_action_chunks import chunk_feature  # noqa: E402
-from scripts.train_supervised_phase_intent import build_encoder  # noqa: E402
 from supervised_phase_controller import (  # noqa: E402
     CausalTemporalFeatureBuffer,
     ConservativeBinaryDecoder,
+    PortableStandardizedLogisticRegression,
     compose_online_features,
     shared_fast_speed,
 )
@@ -38,14 +37,6 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def encode_frame(model, transform, frame: np.ndarray, device: str) -> np.ndarray:
-    import torch
-
-    batch = transform(Image.fromarray(frame).convert("RGB")).unsqueeze(0).to(device)
-    with torch.inference_mode():
-        return model(batch).cpu().numpy()[0].astype(np.float32)
 
 
 def make_env(task: str, seed: int, *, render_images: bool):
@@ -89,8 +80,6 @@ def run_candidate(
     method: str,
     decoder_config: dict,
     encoder,
-    transform,
-    device: str,
     offsets: tuple[int, ...],
     fast_speed: float,
     protected_speed: float,
@@ -119,12 +108,7 @@ def run_candidate(
         trace = []
         while not done:
             visual = (
-                encode_frame(
-                    encoder,
-                    transform,
-                    env.cur_ts.observation["images"]["angle"],
-                    device,
-                )
+                encoder.encode(env.cur_ts.observation["images"]["angle"])
                 if uses_visual
                 else np.empty(0, dtype=np.float32)
             )
@@ -226,6 +210,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", required=True)
     parser.add_argument("--model-dir", type=Path, required=True)
+    parser.add_argument("--portable-model", type=Path, required=True)
+    parser.add_argument("--portable-receipt", type=Path, required=True)
     parser.add_argument("--dataset-manifest", type=Path, required=True)
     parser.add_argument("--action-receipt", type=Path, required=True)
     parser.add_argument("--method", choices=("visual", "action", "fused"), required=True)
@@ -233,7 +219,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fast-speed", type=float, default=2.0)
     parser.add_argument("--protected-speed", type=float, default=1.0)
     parser.add_argument("--cadence", type=int, default=5)
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--encoder-socket", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if len(set(args.seeds)) != len(args.seeds):
@@ -266,18 +252,24 @@ def main() -> int:
     model_path = model_dir / method_result["model"]
     if sha256(model_path) != method_result["model_sha256"]:
         raise ValueError("model hash does not match training result")
-    with model_path.open("rb") as handle:
-        model = pickle.load(handle)
+    portable_path = args.portable_model.resolve()
+    portable_receipt_path = args.portable_receipt.resolve()
+    portable_receipt = json.loads(portable_receipt_path.read_text())
+    if portable_receipt["source_model_sha256"] != sha256(model_path):
+        raise ValueError("portable model source does not match training model")
+    if portable_receipt["output_sha256"] != sha256(portable_path):
+        raise ValueError("portable model hash does not match receipt")
+    model = PortableStandardizedLogisticRegression.load(portable_path)
 
     oracle_path = Path(manifest["controller"])
     if sha256(oracle_path) != manifest["controller_sha256"]:
         raise ValueError("oracle controller hash does not match dataset manifest")
     oracle_config = json.loads(oracle_path.read_text())
     offsets = tuple(int(value) for value in action_receipt["offsets_policy_steps"])
-    if args.method in ("visual", "fused"):
-        encoder, transform, weights = build_encoder(args.device)
-    else:
-        encoder = transform = weights = None
+    uses_visual = args.method in ("visual", "fused")
+    if uses_visual and args.encoder_socket is None:
+        raise ValueError("visual and fused methods require --encoder-socket")
+    encoder = EncoderClient(args.encoder_socket) if uses_visual else None
 
     native = []
     candidate = []
@@ -291,8 +283,6 @@ def main() -> int:
                 method=args.method,
                 decoder_config=method_result["validation_decoder"],
                 encoder=encoder,
-                transform=transform,
-                device=args.device,
                 offsets=offsets,
                 fast_speed=args.fast_speed,
                 protected_speed=args.protected_speed,
@@ -359,7 +349,10 @@ def main() -> int:
             "action_receipt_sha256": sha256(receipt_path),
             "oracle_controller_for_metrics_only": str(oracle_path),
             "oracle_controller_sha256": sha256(oracle_path),
-            "rn18_weights": None if weights is None else str(weights),
+            "portable_model": str(portable_path),
+            "portable_model_sha256": sha256(portable_path),
+            "portable_receipt": str(portable_receipt_path),
+            "portable_receipt_sha256": sha256(portable_receipt_path),
         },
         "oracle_metric_note": (
             "The privileged oracle is evaluated for auditing only and never selects speed. "
@@ -373,6 +366,8 @@ def main() -> int:
     result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     (args.output / "COMPLETE").write_text(f"{sha256(result_path)}  results.json\n")
     print(json.dumps({"summary": result["summary"]}, sort_keys=True), flush=True)
+    if encoder is not None:
+        encoder.close()
     return 0
 
 

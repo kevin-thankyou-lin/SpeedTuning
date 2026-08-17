@@ -13,6 +13,7 @@ from scripts.train_supervised_phase_intent import (
 from supervised_phase_controller import (
     CausalTemporalFeatureBuffer,
     ConservativeBinaryDecoder,
+    PortableStandardizedLogisticRegression,
     shared_fast_speed,
 )
 
@@ -151,3 +152,18 @@ def test_shared_fast_mapping_collapses_protected_segment_speeds():
     assert shared_fast_speed("fast", fast_speed=2.0, protected_speed=1.0) == 2.0
     assert shared_fast_speed("segment_0", fast_speed=2.0, protected_speed=1.0) == 1.0
     assert shared_fast_speed("segment_1", fast_speed=2.0, protected_speed=1.0) == 1.0
+
+
+def test_portable_multiclass_logistic_regression_probabilities():
+    model = PortableStandardizedLogisticRegression(
+        classes=np.asarray(["fast", "segment_0", "segment_1"]),
+        mean=np.asarray([1.0, 2.0]),
+        scale=np.asarray([2.0, 4.0]),
+        coef=np.asarray([[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]]),
+        intercept=np.asarray([0.1, 0.2, 0.3]),
+    )
+    probabilities = model.predict_proba(np.asarray([[3.0, 6.0]]))
+    logits = np.asarray([[1.1, 1.2, -1.7]])
+    expected = np.exp(logits - logits.max(axis=1, keepdims=True))
+    expected /= expected.sum(axis=1, keepdims=True)
+    np.testing.assert_allclose(probabilities, expected)

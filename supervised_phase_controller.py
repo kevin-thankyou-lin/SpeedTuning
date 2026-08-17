@@ -7,6 +7,57 @@ from dataclasses import dataclass
 import numpy as np
 
 
+@dataclass
+class PortableStandardizedLogisticRegression:
+    """NumPy inference for a fitted StandardScaler + LogisticRegression."""
+
+    classes: np.ndarray
+    mean: np.ndarray
+    scale: np.ndarray
+    coef: np.ndarray
+    intercept: np.ndarray
+
+    @classmethod
+    def load(cls, path) -> "PortableStandardizedLogisticRegression":
+        with np.load(path, allow_pickle=False) as payload:
+            return cls(
+                classes=payload["classes"],
+                mean=payload["mean"],
+                scale=payload["scale"],
+                coef=payload["coef"],
+                intercept=payload["intercept"],
+            )
+
+    def __post_init__(self) -> None:
+        self.classes = np.asarray(self.classes).astype(str)
+        self.mean = np.asarray(self.mean, dtype=np.float64).reshape(-1)
+        self.scale = np.asarray(self.scale, dtype=np.float64).reshape(-1)
+        self.coef = np.asarray(self.coef, dtype=np.float64)
+        self.intercept = np.asarray(self.intercept, dtype=np.float64).reshape(-1)
+        if np.any(self.scale <= 0) or not np.all(np.isfinite(self.scale)):
+            raise ValueError("scale must be finite and positive")
+        if self.coef.shape[1] != len(self.mean):
+            raise ValueError("coefficient and scaler dimensions do not match")
+        if self.coef.shape[0] != len(self.intercept):
+            raise ValueError("coefficient and intercept dimensions do not match")
+        expected_rows = 1 if len(self.classes) == 2 else len(self.classes)
+        if self.coef.shape[0] != expected_rows:
+            raise ValueError("coefficient and class dimensions do not match")
+
+    def predict_proba(self, values: np.ndarray) -> np.ndarray:
+        x = np.asarray(values, dtype=np.float64)
+        if x.ndim == 1:
+            x = x.reshape(1, -1)
+        standardized = (x - self.mean) / self.scale
+        logits = standardized @ self.coef.T + self.intercept
+        if len(self.classes) == 2:
+            positive = 1.0 / (1.0 + np.exp(-logits[:, 0]))
+            return np.stack([1.0 - positive, positive], axis=1)
+        logits -= np.max(logits, axis=1, keepdims=True)
+        probabilities = np.exp(logits)
+        return probabilities / probabilities.sum(axis=1, keepdims=True)
+
+
 class CausalTemporalFeatureBuffer:
     """Match ``temporal_features`` one observation at a time."""
 

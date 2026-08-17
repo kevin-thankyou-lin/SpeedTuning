@@ -111,7 +111,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", required=True)
     parser.add_argument("--controller", type=Path, required=True)
     parser.add_argument("--runtime-root", type=Path, required=True)
-    parser.add_argument("--cached-native-results", type=Path, required=True)
+    parser.add_argument("--cached-native-results", type=Path)
     parser.add_argument("--seeds", type=int, nargs="+", required=True)
     parser.add_argument("--arm-name", default="privileged_phase_boundaries")
     parser.add_argument("--output", type=Path, required=True)
@@ -128,15 +128,25 @@ def main() -> int:
     sys.path.insert(0, str(args.runtime_root.resolve()))
     controller_path = args.controller.resolve()
     controller = json.loads(controller_path.read_text())
-    cached_path = args.cached_native_results.resolve()
-    cached = json.loads(cached_path.read_text())
-    cached_native = {int(item["seed"]): item for item in cached["native_1x"]}
-    missing = [seed for seed in args.seeds if seed not in cached_native]
-    if missing:
-        raise ValueError(f"cached native results missing seeds: {missing}")
-    native = [cached_native[seed] for seed in args.seeds]
-    if not all(item["success"] for item in native):
-        raise ValueError("cached native reference contains failures")
+    cached_path = (
+        None
+        if args.cached_native_results is None
+        else args.cached_native_results.resolve()
+    )
+    if cached_path is None:
+        native = [
+            run_privileged(args.task, seed, {"ceiling": 1.0}, "native_1x")
+            for seed in args.seeds
+        ]
+    else:
+        cached = json.loads(cached_path.read_text())
+        cached_native = {int(item["seed"]): item for item in cached["native_1x"]}
+        missing = [seed for seed in args.seeds if seed not in cached_native]
+        if missing:
+            raise ValueError(f"cached native results missing seeds: {missing}")
+        native = [cached_native[seed] for seed in args.seeds]
+        if not all(item["success"] for item in native):
+            raise ValueError("cached native reference contains failures")
 
     candidate = []
     for seed in args.seeds:
@@ -146,6 +156,12 @@ def main() -> int:
             flush=True,
         )
 
+    summary = summarize_privileged(native, candidate)
+    if cached_path is None:
+        summary["new_native_rollouts"] = summary.pop("cached_native_rollouts")
+        summary["cached_native_rollouts"] = 0
+    else:
+        summary["new_native_rollouts"] = 0
     result = {
         "schema": "speedtuning-event-controller-replay-v1",
         "task": args.task,
@@ -156,11 +172,13 @@ def main() -> int:
         "boundary_evaluation_cadence_physics_steps": (
             1 if controller.get("segments") else None
         ),
-        "cached_native_results": str(cached_path),
-        "cached_native_results_sha256": sha256(cached_path),
+        "cached_native_results": None if cached_path is None else str(cached_path),
+        "cached_native_results_sha256": (
+            None if cached_path is None else sha256(cached_path)
+        ),
         "native_1x": native,
         "candidate": candidate,
-        "summary": summarize_privileged(native, candidate),
+        "summary": summary,
         "provenance": {
             "source_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, text=True

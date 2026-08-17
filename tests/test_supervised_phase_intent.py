@@ -1,6 +1,9 @@
 import numpy as np
 
-from scripts.evaluate_privileged_segment_schedule import summarize_privileged
+from scripts.evaluate_privileged_segment_schedule import (
+    controller_speeds,
+    summarize_privileged,
+)
 from scripts.summarize_supervised_shared_fast import audit_result
 
 from scripts.train_supervised_phase_intent import (
@@ -223,6 +226,10 @@ def test_privileged_summary_uses_cached_matched_native_duration():
     assert summary["duration_normalized_speedup"] == 400 / 225
     assert summary["cached_native_rollouts"] == 2
     assert summary["new_candidate_rollouts"] == 2
+
+
+def test_uniform_frontier_controller_has_one_speed():
+    assert controller_speeds({"ceiling": 1.5}) == (1.0, 1.5)
 
 
 def test_shared_fast_mapping_collapses_protected_segment_speeds():

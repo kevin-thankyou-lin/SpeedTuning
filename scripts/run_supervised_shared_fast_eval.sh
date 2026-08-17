@@ -56,7 +56,7 @@ OMP_NUM_THREADS=${ENCODER_THREADS:-4} MKL_NUM_THREADS=${ENCODER_THREADS:-4} \
 "$encoder_python" "$repo_root/scripts/serve_rn18_embeddings.py" \
   --socket "$socket_path" \
   --ready "$ready_path" \
-  --device "${ENCODER_DEVICE:-cuda}" \
+  --device "${ENCODER_DEVICE:-cpu}" \
   >"$output_root/encoder.log" 2>"$output_root/encoder.err" &
 encoder_pid=$!
 for _ in $(seq 1 120); do

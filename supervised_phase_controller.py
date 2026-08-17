@@ -7,6 +7,38 @@ from dataclasses import dataclass
 import numpy as np
 
 
+def resolve_conservative_decoder_config(
+    base: dict[str, object],
+    *,
+    risk_threshold: float | None = None,
+    exit_threshold: float | None = None,
+    exit_stability: int | None = None,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Apply explicit runtime safety margins to a frozen decoder config."""
+    resolved = dict(base)
+    overrides: dict[str, object] = {}
+    requested = {
+        "risk_threshold": risk_threshold,
+        "exit_threshold": exit_threshold,
+        "exit_stability": exit_stability,
+    }
+    for key, value in requested.items():
+        if value is not None:
+            resolved[key] = value
+            overrides[key] = value
+
+    for key in ("risk_threshold", "exit_threshold"):
+        value = float(resolved[key])
+        if not np.isfinite(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(f"{key} must be finite and within [0, 1]")
+        resolved[key] = value
+    stability = int(resolved["exit_stability"])
+    if stability <= 0:
+        raise ValueError("exit_stability must be positive")
+    resolved["exit_stability"] = stability
+    return resolved, overrides
+
+
 @dataclass
 class PortableStandardizedLogisticRegression:
     """NumPy inference for a fitted StandardScaler + LogisticRegression."""

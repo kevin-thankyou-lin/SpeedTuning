@@ -1,5 +1,7 @@
 import numpy as np
 
+from scripts.summarize_supervised_shared_fast import audit_result
+
 from scripts.train_supervised_phase_intent import (
     binary_metrics,
     compose_features,
@@ -15,6 +17,7 @@ from supervised_phase_controller import (
     ConservativeBinaryDecoder,
     mapped_protected_speed,
     PortableStandardizedLogisticRegression,
+    resolve_conservative_decoder_config,
     shared_fast_speed,
 )
 
@@ -147,6 +150,61 @@ def test_stateful_online_decoder_matches_batch_decoder():
     )
     actual = np.asarray([decoder.update(row) for row in probabilities])
     np.testing.assert_array_equal(actual, expected)
+
+
+def test_decoder_margin_overrides_are_explicit_and_leave_source_unchanged():
+    base = {
+        "risk_threshold": 0.45,
+        "exit_threshold": 0.6,
+        "exit_stability": 1,
+        "protected_recall": 1.0,
+    }
+    resolved, overrides = resolve_conservative_decoder_config(
+        base,
+        risk_threshold=0.35,
+        exit_stability=2,
+    )
+    assert base["risk_threshold"] == 0.45
+    assert base["exit_stability"] == 1
+    assert resolved["risk_threshold"] == 0.35
+    assert resolved["exit_threshold"] == 0.6
+    assert resolved["exit_stability"] == 2
+    assert overrides == {"risk_threshold": 0.35, "exit_stability": 2}
+
+
+def test_shared_fast_audit_distinguishes_false_fast_and_safe_segment_swap():
+    result = {
+        "controller": {
+            "fast_speed": 3.0,
+            "protected_labels": ["segment_0", "segment_1"],
+            "protected_speed_map": {"segment_0": 1.5, "segment_1": 1.0},
+        },
+        "summary": {"new_rollouts": 1},
+        "candidate": [
+            {
+                "seed": 7,
+                "success": True,
+                "trace": [
+                    {"oracle_label": "fast", "prediction": "fast", "speed": 3.0},
+                    {
+                        "oracle_label": "segment_0",
+                        "prediction": "segment_1",
+                        "speed": 1.0,
+                    },
+                    {
+                        "oracle_label": "segment_1",
+                        "prediction": "fast",
+                        "speed": 3.0,
+                    },
+                ],
+            }
+        ],
+    }
+    audit = audit_result(result)
+    assert audit["false_fast_rate"] == 0.5
+    assert audit["protected_recall"] == 0.5
+    assert audit["protected_segment_exact_accuracy"] == 0.0
+    assert audit["speed_choice_accuracy"] == 1 / 3
 
 
 def test_shared_fast_mapping_collapses_protected_segment_speeds():

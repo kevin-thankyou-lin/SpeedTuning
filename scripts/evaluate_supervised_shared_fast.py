@@ -28,6 +28,7 @@ from supervised_phase_controller import (  # noqa: E402
     PortableStandardizedLogisticRegression,
     compose_online_features,
     mapped_protected_speed,
+    resolve_conservative_decoder_config,
     shared_fast_speed,
 )
 
@@ -193,7 +194,11 @@ def summarize(native: list[dict], candidate: list[dict]) -> dict:
     )
     candidate_mean = float(np.mean([item["physics_steps"] for item in candidate]))
     return {
-        "native_1x_success_rate": float(np.mean([item["success"] for item in native])),
+        "native_1x_success_rate": (
+            None
+            if not native
+            else float(np.mean([item["success"] for item in native]))
+        ),
         "candidate_success_rate": float(
             np.mean([item["success"] for item in candidate])
         ),
@@ -228,6 +233,14 @@ def parse_args() -> argparse.Namespace:
         metavar="LABEL=SPEED",
     )
     parser.add_argument("--cadence", type=int, default=5)
+    parser.add_argument("--decoder-risk-threshold", type=float)
+    parser.add_argument("--decoder-exit-threshold", type=float)
+    parser.add_argument("--decoder-exit-stability", type=int)
+    parser.add_argument(
+        "--candidate-only",
+        action="store_true",
+        help="skip native rollouts for counterexample repair probes",
+    )
     parser.add_argument("--encoder-socket", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -297,17 +310,25 @@ def main() -> int:
         raise ValueError("visual and fused methods require --encoder-socket")
     encoder = EncoderClient(args.encoder_socket) if uses_visual else None
 
+    decoder_config, decoder_overrides = resolve_conservative_decoder_config(
+        method_result["validation_decoder"],
+        risk_threshold=args.decoder_risk_threshold,
+        exit_threshold=args.decoder_exit_threshold,
+        exit_stability=args.decoder_exit_stability,
+    )
+
     native = []
     candidate = []
     for seed in args.seeds:
-        native.append(run_native(args.task, seed))
+        if not args.candidate_only:
+            native.append(run_native(args.task, seed))
         candidate.append(
             run_candidate(
                 args.task,
                 seed,
                 model=model,
                 method=args.method,
-                decoder_config=method_result["validation_decoder"],
+                decoder_config=decoder_config,
                 encoder=encoder,
                 offsets=offsets,
                 fast_speed=args.fast_speed,
@@ -322,7 +343,7 @@ def main() -> int:
                 {
                     "task": args.task,
                     "seed": seed,
-                    "native": native[-1],
+                    "native": None if args.candidate_only else native[-1],
                     "candidate": {
                         key: value
                         for key, value in candidate[-1].items()
@@ -335,7 +356,7 @@ def main() -> int:
         )
 
     result = {
-        "schema": "speedtuning-supervised-shared-fast-v1",
+        "schema": "speedtuning-supervised-shared-fast-v2",
         "task": args.task,
         "method": args.method,
         "seeds": args.seeds,
@@ -361,7 +382,14 @@ def main() -> int:
             )
             == 1,
             "decision_cadence_physics_steps": args.cadence,
-            "decoder": method_result["validation_decoder"],
+            "decoder": decoder_config,
+            "validation_decoder": method_result["validation_decoder"],
+            "decoder_overrides": decoder_overrides,
+            "evaluation_arms": (
+                ["learned_shared_fast"]
+                if args.candidate_only
+                else ["native_1x", "learned_shared_fast"]
+            ),
             "runtime_speed_inputs": (
                 ["scripted_policy_action_chunk"]
                 if args.method == "action"

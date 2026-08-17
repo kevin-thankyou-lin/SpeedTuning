@@ -19,6 +19,11 @@ class BasePolicy:
     def generate_trajectory(self, ts_first):
         raise NotImplementedError
 
+    def maybe_replan(self, ts):
+        """Update a generated trajectory from a causal observation, if supported."""
+
+        del ts
+
     @staticmethod
     def interpolate(curr_waypoint, next_waypoint, t):
         t_frac = (t - curr_waypoint["t"]) / (next_waypoint["t"] - curr_waypoint["t"] + 1e-8)
@@ -40,6 +45,8 @@ class BasePolicy:
         # generate trajectory at first timestep, then open-loop execution
         if self.step_count == 0:
             self.generate_trajectory(ts)
+
+        self.maybe_replan(ts)
 
         curr_left_waypoint, next_left_waypoint = self._waypoint_pair(
             self.left_trajectory, self.step_count
@@ -177,6 +184,157 @@ class PickAndTransferTeaBagPolicy(BasePolicy):
 
 class InsertionPolicy(BasePolicy):
 
+    REPLAN_REWARD = 2
+    REPLAN_MIN_POLICY_TIME = 220
+    REPLAN_DEADLINE_POLICY_TIME = 284
+
+    def __init__(self, inject_noise=False, enable_postgrasp_replan=True):
+        super().__init__(inject_noise=inject_noise)
+        self.enable_postgrasp_replan = bool(enable_postgrasp_replan)
+        self.replan_count = 0
+        self.replan_event = None
+        self._nominal_object_in_gripper = None
+        self._nominal_suffix = None
+
+    def reset(self):
+        super().reset()
+        self.replan_count = 0
+        self.replan_event = None
+        self._nominal_object_in_gripper = None
+        self._nominal_suffix = None
+
+    @staticmethod
+    def _relative_pose(parent_pose, child_pose):
+        """Return the child pose expressed in the parent frame."""
+
+        parent_pose = np.asarray(parent_pose, dtype=np.float64)
+        child_pose = np.asarray(child_pose, dtype=np.float64)
+        parent_quat = Quaternion(parent_pose[3:]).normalised
+        child_quat = Quaternion(child_pose[3:]).normalised
+        relative_quat = parent_quat.inverse * child_quat
+        relative_xyz = parent_quat.inverse.rotate(child_pose[:3] - parent_pose[:3])
+        return np.concatenate([relative_xyz, relative_quat.elements])
+
+    @staticmethod
+    def _compose_pose(parent_pose, child_in_parent):
+        """Compose a world parent pose with a child pose in that frame."""
+
+        parent_pose = np.asarray(parent_pose, dtype=np.float64)
+        child_in_parent = np.asarray(child_in_parent, dtype=np.float64)
+        parent_quat = Quaternion(parent_pose[3:]).normalised
+        child_quat = Quaternion(child_in_parent[3:]).normalised
+        child_xyz = parent_pose[:3] + parent_quat.rotate(child_in_parent[:3])
+        child_world_quat = parent_quat * child_quat
+        return np.concatenate([child_xyz, child_world_quat.elements])
+
+    @staticmethod
+    def _parent_pose_for_child(child_world_pose, child_in_parent):
+        """Solve the parent pose that places a grasped child at a world pose."""
+
+        child_world_pose = np.asarray(child_world_pose, dtype=np.float64)
+        child_in_parent = np.asarray(child_in_parent, dtype=np.float64)
+        child_world_quat = Quaternion(child_world_pose[3:]).normalised
+        child_relative_quat = Quaternion(child_in_parent[3:]).normalised
+        parent_quat = child_world_quat * child_relative_quat.inverse
+        parent_xyz = child_world_pose[:3] - parent_quat.rotate(child_in_parent[:3])
+        return np.concatenate([parent_xyz, parent_quat.elements])
+
+    @staticmethod
+    def _pose_error(reference_pose, observed_pose):
+        reference_pose = np.asarray(reference_pose, dtype=np.float64)
+        observed_pose = np.asarray(observed_pose, dtype=np.float64)
+        reference_quat = Quaternion(reference_pose[3:]).normalised
+        observed_quat = Quaternion(observed_pose[3:]).normalised
+        rotation = reference_quat.inverse * observed_quat
+        angle_degrees = np.degrees(abs(rotation.angle))
+        if angle_degrees > 180.0:
+            angle_degrees = 360.0 - angle_degrees
+        return {
+            "translation_m": float(np.linalg.norm(reference_pose[:3] - observed_pose[:3])),
+            "rotation_deg": float(angle_degrees),
+        }
+
+    def _adapt_waypoint(self, waypoint, nominal_object_in_gripper, actual_object_in_gripper):
+        nominal_gripper_pose = np.concatenate([waypoint["xyz"], waypoint["quat"]])
+        desired_object_pose = self._compose_pose(
+            nominal_gripper_pose, nominal_object_in_gripper
+        )
+        # Preserve the demonstrated gripper orientation.  The socket's free-joint
+        # quaternion can jump between equivalent symmetric orientations while it
+        # is grasped; following that quaternion caused a destructive wrist turn.
+        # The achieved object offset in the gripper frame is still a reliable
+        # translation correction.
+        nominal_gripper_quat = Quaternion(waypoint["quat"]).normalised
+        adapted_xyz = desired_object_pose[:3] - nominal_gripper_quat.rotate(
+            actual_object_in_gripper[:3]
+        )
+        return {
+            **waypoint,
+            "xyz": adapted_xyz,
+            "quat": np.asarray(waypoint["quat"], dtype=np.float64).copy(),
+        }
+
+    def maybe_replan(self, ts):
+        if not self.enable_postgrasp_replan:
+            return
+        if self.replan_count:
+            return
+        reward = int(ts.reward or 0)
+        if reward < self.REPLAN_REWARD:
+            return
+        if not self.REPLAN_MIN_POLICY_TIME <= self.step_count <= self.REPLAN_DEADLINE_POLICY_TIME:
+            return
+
+        env_state = np.asarray(ts.observation["env_state"], dtype=np.float64)
+        current_objects = {
+            "left": env_state[7:14],
+            "right": env_state[:7],
+        }
+        current_grippers = {
+            "left": np.asarray(ts.observation["mocap_pose_left"], dtype=np.float64),
+            "right": np.asarray(ts.observation["mocap_pose_right"], dtype=np.float64),
+        }
+        actual_object_in_gripper = {
+            side: self._relative_pose(current_grippers[side], current_objects[side])
+            for side in ("left", "right")
+        }
+
+        for side in ("left", "right"):
+            nominal_suffix = self._nominal_suffix[side]
+            adapted_suffix = [
+                self._adapt_waypoint(
+                    waypoint,
+                    self._nominal_object_in_gripper[side],
+                    actual_object_in_gripper[side],
+                )
+                for waypoint in nominal_suffix
+                if waypoint["t"] > self.step_count
+            ]
+            current = {
+                "t": self.step_count,
+                "xyz": current_grippers[side][:3].copy(),
+                "quat": current_grippers[side][3:].copy(),
+                "gripper": 0,
+            }
+            if not adapted_suffix:
+                continue
+            setattr(self, f"{side}_trajectory", [current, *adapted_suffix])
+
+        self.replan_count = 1
+        self.replan_event = {
+            "policy_time": float(self.step_count),
+            "reward": reward,
+            "state_source": "privileged_sim_object_pose",
+            "correction_mode": "translation_only_preserve_demonstrated_orientation",
+            "grasp_error": {
+                side: self._pose_error(
+                    self._nominal_object_in_gripper[side],
+                    actual_object_in_gripper[side],
+                )
+                for side in ("left", "right")
+            },
+        }
+
     def generate_trajectory(self, ts_first):
         init_mocap_pose_right = ts_first.observation['mocap_pose_right']
         init_mocap_pose_left = ts_first.observation['mocap_pose_left']
@@ -218,6 +376,21 @@ class InsertionPolicy(BasePolicy):
             {"t": 400, "xyz": meet_xyz + np.array([0.05, 0, lift_right]), "quat": gripper_pick_quat_right.elements, "gripper": 0},  # insertion
 
         ]
+
+        left_grasp_pose = np.concatenate(
+            [self.left_trajectory[3]["xyz"], self.left_trajectory[3]["quat"]]
+        )
+        right_grasp_pose = np.concatenate(
+            [self.right_trajectory[3]["xyz"], self.right_trajectory[3]["quat"]]
+        )
+        self._nominal_object_in_gripper = {
+            "left": self._relative_pose(left_grasp_pose, socket_info),
+            "right": self._relative_pose(right_grasp_pose, peg_info),
+        }
+        self._nominal_suffix = {
+            "left": [{**waypoint} for waypoint in self.left_trajectory[4:]],
+            "right": [{**waypoint} for waypoint in self.right_trajectory[4:]],
+        }
 
 
 POLICY_CLASSES = {

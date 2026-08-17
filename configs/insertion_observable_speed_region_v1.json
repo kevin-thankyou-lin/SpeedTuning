@@ -1,0 +1,28 @@
+{
+  "schema": "speedtuning-observable-behavior-region-config-v1",
+  "task_adapter": "insertion paired right-peg left-socket",
+  "privilege": "simulator object state; no base-policy internals or reward",
+  "profile": {
+    "path": "/tmp/insertion-observable-speed-region-20260817/profile-fixed2-retired14/profile.json",
+    "sha256": "51a126339a168070171f7c4ff67eb9c0740dead8f65c3fdfa7bde93abd472212"
+  },
+  "controller": {
+    "protected_speed": 2.0,
+    "fast_speed": 3.0,
+    "min_object_lift_m": 0.005,
+    "max_relative_translation_delta_m": 0.004633923042818644,
+    "max_object_rotation_delta_deg": 1.0,
+    "max_closed_gripper_position": 0.8991512184737069,
+    "terminal_object_distance_m": 0.13017734875144,
+    "stable_observations": 2
+  },
+  "runtime_forbidden_inputs": [
+    "base_policy_object",
+    "base_policy_time",
+    "base_policy_phase",
+    "replan_count",
+    "replan_event",
+    "reward",
+    "success_flag"
+  ]
+}

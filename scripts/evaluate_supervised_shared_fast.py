@@ -27,6 +27,7 @@ from supervised_phase_controller import (  # noqa: E402
     ConservativeBinaryDecoder,
     PortableStandardizedLogisticRegression,
     compose_online_features,
+    mapped_protected_speed,
     shared_fast_speed,
 )
 
@@ -83,6 +84,7 @@ def run_candidate(
     offsets: tuple[int, ...],
     fast_speed: float,
     protected_speed: float,
+    protected_speed_map: dict[str, float],
     cadence: int,
     oracle_config: dict,
 ) -> dict:
@@ -122,10 +124,11 @@ def run_candidate(
             )
             probabilities = model.predict_proba(features.reshape(1, -1))[0]
             label = decoder.update(probabilities)
-            speed = shared_fast_speed(
+            speed = mapped_protected_speed(
                 label,
                 fast_speed=fast_speed,
-                protected_speed=protected_speed,
+                default_protected_speed=protected_speed,
+                protected_speed_map=protected_speed_map,
             )
             decision = {
                 "physics_steps": int(env.physics_steps),
@@ -218,6 +221,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", type=int, nargs="+", required=True)
     parser.add_argument("--fast-speed", type=float, default=2.0)
     parser.add_argument("--protected-speed", type=float, default=1.0)
+    parser.add_argument(
+        "--protected-speed-override",
+        action="append",
+        default=[],
+        metavar="LABEL=SPEED",
+    )
     parser.add_argument("--cadence", type=int, default=5)
     parser.add_argument("--encoder-socket", type=Path)
     parser.add_argument("--output", type=Path, required=True)
@@ -228,6 +237,18 @@ def parse_args() -> argparse.Namespace:
         parser.error("cadence must be positive")
     if args.output.exists():
         parser.error("output already exists; refusing to overwrite a prior attempt")
+    args.protected_speed_map = {}
+    for item in args.protected_speed_override:
+        label, separator, value = item.partition("=")
+        if not separator or label in args.protected_speed_map:
+            parser.error("protected speed overrides must be unique LABEL=SPEED values")
+        try:
+            speed = float(value)
+        except ValueError:
+            parser.error(f"invalid protected speed override: {item}")
+        if not np.isfinite(speed) or speed <= 0:
+            parser.error("protected speed overrides must be finite and positive")
+        args.protected_speed_map[label] = speed
     return args
 
 
@@ -260,6 +281,11 @@ def main() -> int:
     if portable_receipt["output_sha256"] != sha256(portable_path):
         raise ValueError("portable model hash does not match receipt")
     model = PortableStandardizedLogisticRegression.load(portable_path)
+    unknown_overrides = set(args.protected_speed_map) - (
+        set(model.classes_) - {"fast"}
+    )
+    if unknown_overrides:
+        raise ValueError(f"unknown protected labels in speed map: {sorted(unknown_overrides)}")
 
     oracle_path = Path(manifest["controller"])
     if sha256(oracle_path) != manifest["controller_sha256"]:
@@ -286,6 +312,7 @@ def main() -> int:
                 offsets=offsets,
                 fast_speed=args.fast_speed,
                 protected_speed=args.protected_speed,
+                protected_speed_map=args.protected_speed_map,
                 cadence=args.cadence,
                 oracle_config=oracle_config,
             )
@@ -315,10 +342,24 @@ def main() -> int:
         "controller": {
             "fast_speed": args.fast_speed,
             "protected_speed": args.protected_speed,
+            "protected_speed_map": {
+                str(label): args.protected_speed_map.get(
+                    str(label), args.protected_speed
+                )
+                for label in model.classes_
+                if label != "fast"
+            },
             "protected_labels": [
                 str(value) for value in model.classes_ if value != "fast"
             ],
-            "all_protected_labels_share_speed": True,
+            "all_protected_labels_share_speed": len(
+                {
+                    args.protected_speed_map.get(str(label), args.protected_speed)
+                    for label in model.classes_
+                    if label != "fast"
+                }
+            )
+            == 1,
             "decision_cadence_physics_steps": args.cadence,
             "decoder": method_result["validation_decoder"],
             "runtime_speed_inputs": (

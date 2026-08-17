@@ -155,6 +155,25 @@ def shared_fast_speed(
     return float(speed)
 
 
+def mapped_protected_speed(
+    label: str,
+    *,
+    fast_speed: float,
+    default_protected_speed: float,
+    protected_speed_map: dict[str, float],
+) -> float:
+    """Use one fast ceiling while allowing protected labels to differ."""
+
+    speed = (
+        fast_speed
+        if label == "fast"
+        else protected_speed_map.get(label, default_protected_speed)
+    )
+    if not np.isfinite(speed) or speed <= 0:
+        raise ValueError("speeds must be finite and positive")
+    return float(speed)
+
+
 def compose_online_features(
     method: str,
     visual: np.ndarray,

@@ -13,6 +13,7 @@ from scripts.train_supervised_phase_intent import (
 from supervised_phase_controller import (
     CausalTemporalFeatureBuffer,
     ConservativeBinaryDecoder,
+    mapped_protected_speed,
     PortableStandardizedLogisticRegression,
     shared_fast_speed,
 )
@@ -152,6 +153,17 @@ def test_shared_fast_mapping_collapses_protected_segment_speeds():
     assert shared_fast_speed("fast", fast_speed=2.0, protected_speed=1.0) == 2.0
     assert shared_fast_speed("segment_0", fast_speed=2.0, protected_speed=1.0) == 1.0
     assert shared_fast_speed("segment_1", fast_speed=2.0, protected_speed=1.0) == 1.0
+
+
+def test_mapped_protected_speeds_keep_one_fast_ceiling():
+    kwargs = {
+        "fast_speed": 3.0,
+        "default_protected_speed": 1.0,
+        "protected_speed_map": {"segment_0": 1.5},
+    }
+    assert mapped_protected_speed("fast", **kwargs) == 3.0
+    assert mapped_protected_speed("segment_0", **kwargs) == 1.5
+    assert mapped_protected_speed("segment_1", **kwargs) == 1.0
 
 
 def test_portable_multiclass_logistic_regression_probabilities():

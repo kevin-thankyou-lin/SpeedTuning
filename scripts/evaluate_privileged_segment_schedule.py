@@ -40,7 +40,12 @@ def controller_speeds(config: dict[str, Any]) -> tuple[float, ...]:
     return tuple(sorted(speeds))
 
 
-def run_privileged(task: str, seed: int, config: dict[str, Any]) -> dict[str, Any]:
+def run_privileged(
+    task: str,
+    seed: int,
+    config: dict[str, Any],
+    arm_name: str,
+) -> dict[str, Any]:
     env = make_env(task, seed, controller_speeds(config), False)
     controller = EventController(config)
     trace = []
@@ -69,7 +74,7 @@ def run_privileged(task: str, seed: int, config: dict[str, Any]) -> dict[str, An
             last_reward = float(info["task_reward"])
             last_success = bool(info["success"])
         return {
-            "arm": "privileged_phase_boundaries",
+            "arm": arm_name,
             "seed": seed,
             "success": bool(info["success"]),
             "physics_steps": int(env.physics_steps),
@@ -108,6 +113,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--runtime-root", type=Path, required=True)
     parser.add_argument("--cached-native-results", type=Path, required=True)
     parser.add_argument("--seeds", type=int, nargs="+", required=True)
+    parser.add_argument("--arm-name", default="privileged_phase_boundaries")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if len(set(args.seeds)) != len(args.seeds):
@@ -134,20 +140,22 @@ def main() -> int:
 
     candidate = []
     for seed in args.seeds:
-        candidate.append(run_privileged(args.task, seed, controller))
+        candidate.append(run_privileged(args.task, seed, controller, args.arm_name))
         print(
             json.dumps({key: value for key, value in candidate[-1].items() if key != "trace"}, sort_keys=True),
             flush=True,
         )
 
     result = {
-        "schema": "speedtuning-privileged-phase-boundary-replay-v1",
+        "schema": "speedtuning-event-controller-replay-v1",
         "task": args.task,
         "seeds": args.seeds,
         "controller": controller,
         "controller_sha256": sha256(controller_path),
-        "runtime_boundary_inputs_privileged": True,
-        "boundary_evaluation_cadence_physics_steps": 1,
+        "runtime_boundary_inputs_privileged": bool(controller.get("segments")),
+        "boundary_evaluation_cadence_physics_steps": (
+            1 if controller.get("segments") else None
+        ),
         "cached_native_results": str(cached_path),
         "cached_native_results_sha256": sha256(cached_path),
         "native_1x": native,

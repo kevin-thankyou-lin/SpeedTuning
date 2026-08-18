@@ -19,6 +19,7 @@ from ee_sim_env import make_ee_sim_env
 from scripted_policy import make_scripted_policy
 from sim_env import make_sim_env
 from sim_tasks import get_task_spec, normalize_task_name
+from semantic_phase import FuturePhasePrediction, SemanticPhaseStrideController
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -174,6 +175,81 @@ class ChunkedPolicyRunner:
         )
         self._chunk_index += speed
         self.predictor.advance(speed)
+        return action.copy()
+
+
+class SemanticPhaseChunkRunner:
+    """Execute chunks using phase IDs predicted from each fresh action chunk.
+
+    ``phase_predictor`` may be callable or expose
+    ``predict_phases(observation, chunk)``.  It must return a
+    :class:`FuturePhasePrediction`.  The semantic controller owns the runtime
+    speed; callers cannot inject a second framewise speed signal.
+    """
+
+    def __init__(self, predictor, phase_predictor, phase_controller):
+        self.predictor = (
+            predictor
+            if isinstance(predictor, ChunkPredictorAdapter)
+            else ChunkPredictorAdapter(predictor)
+        )
+        predict_phases = getattr(phase_predictor, "predict_phases", None)
+        if predict_phases is None and callable(phase_predictor):
+            predict_phases = phase_predictor
+        if predict_phases is None:
+            raise TypeError("phase_predictor must be callable or define predict_phases()")
+        if not isinstance(phase_controller, SemanticPhaseStrideController):
+            raise TypeError("phase_controller must be a SemanticPhaseStrideController")
+        self.phase_predictor = phase_predictor
+        self._predict_phases = predict_phases
+        self.phase_controller = phase_controller
+        self._chunk = None
+        self._chunk_index = 0.0
+        self._decision_speed = None
+        self._phase_prediction = None
+
+    @property
+    def decision_speed(self):
+        return self._decision_speed
+
+    @property
+    def phase_prediction(self):
+        return self._phase_prediction
+
+    def reset(self):
+        self._chunk = None
+        self._chunk_index = 0.0
+        self._decision_speed = None
+        self._phase_prediction = None
+        for value in (self.predictor, self.phase_predictor):
+            reset = getattr(value, "reset", None)
+            if reset is not None:
+                reset()
+
+    def begin_decision(self, observation):
+        self._chunk = self.predictor(observation)
+        self._chunk_index = 0.0
+        prediction = self._predict_phases(observation, self._chunk.copy())
+        if not isinstance(prediction, FuturePhasePrediction):
+            raise TypeError("phase predictor must return FuturePhasePrediction")
+        self._phase_prediction = prediction
+        self._decision_speed = self.phase_controller.choose_stride(
+            self._chunk, prediction
+        )
+        return self._chunk
+
+    def action(self, observation):
+        if self._chunk is None or self._chunk_index >= len(self._chunk):
+            self.begin_decision(observation)
+
+        lower = int(np.floor(self._chunk_index))
+        upper = min(lower + 1, len(self._chunk) - 1)
+        fraction = self._chunk_index - lower
+        action = self._chunk[lower] + fraction * (
+            self._chunk[upper] - self._chunk[lower]
+        )
+        self._chunk_index += self._decision_speed
+        self.predictor.advance(self._decision_speed)
         return action.copy()
 
 

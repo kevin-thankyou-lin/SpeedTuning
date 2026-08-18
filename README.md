@@ -209,6 +209,15 @@ maps causal video clips to a continuous position in one reference execution.
 It keeps visual correspondence separate from editable segment and playback-speed
 metadata; changing a segment boundary requires no model retraining.
 
+## Future semantic-phase chunk control
+
+The experimental [future semantic-phase prototype](docs/FUTURE_SEMANTIC_PHASES.md)
+predicts stable phase IDs across a proposed action chunk and selects the
+largest configured stride that cannot skip into a slower phase or cross a
+gripper transition.  It supports named offline `semantic_phase_id` labels and
+keeps the deployed predictor limited to current observations plus the proposed
+action chunk.
+
 ## Commands
 
 | Command | Purpose |

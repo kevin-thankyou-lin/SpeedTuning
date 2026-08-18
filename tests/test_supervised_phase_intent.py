@@ -77,6 +77,18 @@ def test_reward_phase4_labels_clip_terminal_rewards():
     )
 
 
+def test_semantic_phase_labels_use_stable_named_ids():
+    records = [
+        {"semantic_phase_id": "approach_object"},
+        {"semantic_phase_id": "pregrasp_align"},
+        {"semantic_phase_id": "grasp_confirm"},
+    ]
+    np.testing.assert_array_equal(
+        labels_for_records(records, "semantic-phase"),
+        np.asarray(["approach_object", "pregrasp_align", "grasp_confirm"]),
+    )
+
+
 def test_monotonic_phase_decoder_advances_one_phase_at_a_time():
     classes = np.asarray(["phase_1", "phase_2", "phase_3", "phase_4"])
     probabilities = np.asarray(

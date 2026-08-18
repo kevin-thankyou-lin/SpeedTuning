@@ -21,6 +21,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.probe_phase_correspondence import augment_transform, load_records, metrics  # noqa: E402
+from semantic_phase import (  # noqa: E402
+    FuturePhaseSequencePredictor,
+    future_phase_targets,
+    parse_future_offsets,
+)
 
 
 def sha256(path: Path) -> str:
@@ -113,6 +118,18 @@ def labels_for_records(records: list[dict], mode: str) -> np.ndarray:
         return np.asarray(
             [f"phase_{min(4, int(float(record['task_reward'])) + 1)}" for record in records]
         )
+    if mode == "semantic-phase":
+        missing = [
+            index
+            for index, record in enumerate(records)
+            if "semantic_phase_id" not in record
+        ]
+        if missing:
+            raise ValueError(
+                "semantic-phase labels require semantic_phase_id on every record; "
+                f"missing indices begin with {missing[:5]}"
+            )
+        return np.asarray([str(record["semantic_phase_id"]) for record in records])
     raise ValueError(mode)
 
 
@@ -364,6 +381,66 @@ def evaluate_phase_model(model, sequences, decoder, labels):
     }
 
 
+def evaluate_raw_phase_model(model, sequences, labels):
+    """Evaluate named semantic IDs without assuming a universal phase order."""
+
+    truth = []
+    prediction = []
+    by_speed = {}
+    for _seed, speed, x, y in sequences:
+        pred = model.predict(x)
+        truth.append(y)
+        prediction.append(pred)
+        by_speed.setdefault(str(speed), {"truth": [], "prediction": []})
+        by_speed[str(speed)]["truth"].append(y)
+        by_speed[str(speed)]["prediction"].append(pred)
+    return {
+        "raw_multiclass": metrics(
+            concatenate_sequences(truth), concatenate_sequences(prediction), labels
+        ),
+        "raw_by_speed": {
+            speed: metrics(
+                concatenate_sequences(item["truth"]),
+                concatenate_sequences(item["prediction"]),
+                labels,
+            )
+            for speed, item in by_speed.items()
+        },
+    }
+
+
+def evaluate_future_phase_model(model, sequences, labels):
+    """Report exact semantic-ID prediction quality at every future offset."""
+
+    truth = []
+    prediction = []
+    for _seed, _speed, x, y in sequences:
+        truth.append(y)
+        prediction.append(model.predict(x))
+    y_true = concatenate_sequences(truth)
+    y_pred = concatenate_sequences(prediction)
+    per_offset = {}
+    for column, offset in enumerate(model.offsets):
+        score = metrics(y_true[:, column], y_pred[:, column], labels)
+        per_offset[str(offset)] = {
+            key: score[key]
+            for key in (
+                "frames",
+                "accuracy",
+                "balanced_accuracy",
+                "macro_f1",
+                "confusion",
+            )
+        }
+    return {
+        "frames": int(y_true.shape[0]),
+        "offsets": list(model.offsets),
+        "element_accuracy": float(np.mean(y_true == y_pred)),
+        "whole_sequence_accuracy": float(np.mean(np.all(y_true == y_pred, axis=1))),
+        "per_offset": per_offset,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=Path, required=True)
@@ -378,13 +455,19 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--label-mode",
-        choices=("oracle-risk", "reward-phase4"),
+        choices=("oracle-risk", "reward-phase4", "semantic-phase"),
         default="oracle-risk",
+    )
+    parser.add_argument(
+        "--future-offsets",
+        default="0,1,2,3",
+        help="Nominal policy-step offsets for future semantic phase heads.",
     )
     args = parser.parse_args()
 
     random.seed(args.seed)
     np.random.seed(args.seed)
+    future_offsets = parse_future_offsets(args.future_offsets)
     manifest, episodes = load_records(args.dataset)
     successful = [int(item["seed"]) for item in manifest["episodes"] if item["success"]]
     required = args.train_videos + args.validation_videos + args.final_videos
@@ -440,12 +523,13 @@ def main() -> int:
         train_y = []
         for seed in train_seeds:
             y = labels_for_records(episodes[seed], args.label_mode)
+            future_y = future_phase_targets(episodes[seed], y, future_offsets)
             for speed in (1, 2, 3):
                 x, warped_y = warped_features(
                     method,
                     feature_banks[seed]["visual"],
                     feature_banks[seed]["action"],
-                    y,
+                    future_y,
                     speed,
                 )
                 train_x.append(x)
@@ -458,8 +542,20 @@ def main() -> int:
                         action_bank[str(seed)],
                     )
                     train_x.append(augmented)
-                    train_y.append(y)
-        classifier = fit_model(concatenate_sequences(train_x), concatenate_sequences(train_y), labels, args.seed)
+                    train_y.append(future_y)
+        train_features = concatenate_sequences(train_x)
+        train_targets = concatenate_sequences(train_y)
+        phase_models = [
+            fit_model(
+                train_features,
+                train_targets[:, column],
+                labels,
+                args.seed,
+            )
+            for column in range(len(future_offsets))
+        ]
+        future_model = FuturePhaseSequencePredictor(future_offsets, phase_models)
+        classifier = phase_models[0]
 
         validation_sequences = []
         for seed in validation_seeds:
@@ -475,12 +571,16 @@ def main() -> int:
                 validation_sequences.append((x, warped_y))
         if args.label_mode == "reward-phase4":
             decoder, candidates = tune_phase_decoder(classifier, validation_sequences)
+        elif args.label_mode == "semantic-phase":
+            decoder, candidates = {"type": "raw-semantic-phase"}, []
         else:
             decoder, candidates = tune_decoder(classifier, validation_sequences, labels)
 
         final_sequences = []
+        future_final_sequences = []
         for seed in final_seeds:
             y = labels_for_records(episodes[seed], args.label_mode)
+            future_y = future_phase_targets(episodes[seed], y, future_offsets)
             for speed in (1, 2, 3):
                 x, warped_y = warped_features(
                     method,
@@ -490,23 +590,43 @@ def main() -> int:
                     speed,
                 )
                 final_sequences.append((seed, speed, x, warped_y))
+                future_x, future_warped_y = warped_features(
+                    method,
+                    feature_banks[seed]["visual"],
+                    feature_banks[seed]["action"],
+                    future_y,
+                    speed,
+                )
+                future_final_sequences.append(
+                    (seed, speed, future_x, future_warped_y)
+                )
         if args.label_mode == "reward-phase4":
             final = evaluate_phase_model(classifier, final_sequences, decoder, labels)
+        elif args.label_mode == "semantic-phase":
+            final = evaluate_raw_phase_model(classifier, final_sequences, labels)
         else:
             final = evaluate_model(classifier, final_sequences, decoder, labels)
         model_path = args.output / f"{method}.pkl"
         with model_path.open("wb") as handle:
             pickle.dump(classifier, handle)
+        future_model_path = args.output / f"{method}.future-phases.pkl"
+        with future_model_path.open("wb") as handle:
+            pickle.dump(future_model, handle)
         results[method] = {
             "validation_decoder": decoder,
             "validation_candidates": candidates,
             "final": final,
             "model": model_path.name,
             "model_sha256": sha256(model_path),
+            "future_phase_model": future_model_path.name,
+            "future_phase_model_sha256": sha256(future_model_path),
+            "future_phase_final": evaluate_future_phase_model(
+                future_model, future_final_sequences, labels
+            ),
         }
 
     result = {
-        "schema": "speedtuning-supervised-phase-intent-v2",
+        "schema": "speedtuning-supervised-phase-intent-v3",
         "task": manifest["task"],
         "frozen_backbone": "ImageNet ResNet18",
         "backbone_trainable": False,
@@ -518,10 +638,15 @@ def main() -> int:
         "final_seeds": final_seeds,
         "labels": labels,
         "label_mode": args.label_mode,
+        "future_phase_offsets_policy_steps": list(future_offsets),
         "label_definition": (
             "phase_k := clipped integer task reward k-1; offline privileged labels only"
             if args.label_mode == "reward-phase4"
-            else "existing causal-search protected segments"
+            else (
+                "stable semantic_phase_id attached to each offline record"
+                if args.label_mode == "semantic-phase"
+                else "existing causal-search protected segments"
+            )
         ),
         "results": results,
         "dataset_manifest_sha256": sha256(args.dataset / "manifest.json"),
@@ -534,11 +659,23 @@ def main() -> int:
                 "evaluated_on": "10 untouched trajectories at 1x, 2x, and 3x subsampling",
             }
             if args.label_mode == "reward-phase4"
-            else {
-                "protected_recall_min": 0.99,
-                "false_fast_rate_max": 0.01,
-                "evaluated_on": "10 untouched trajectories at 1x, 2x, and 3x subsampling",
-            }
+            else (
+                {
+                    "status": "report-only until the semantic phase ontology is frozen",
+                    "reported_metrics": [
+                        "balanced_accuracy",
+                        "future_phase_element_accuracy",
+                        "future_phase_whole_sequence_accuracy",
+                    ],
+                    "evaluated_on": "10 untouched trajectories at 1x, 2x, and 3x subsampling",
+                }
+                if args.label_mode == "semantic-phase"
+                else {
+                    "protected_recall_min": 0.99,
+                    "false_fast_rate_max": 0.01,
+                    "evaluated_on": "10 untouched trajectories at 1x, 2x, and 3x subsampling",
+                }
+            )
         ),
     }
     result_path = args.output / "results.json"
@@ -552,7 +689,11 @@ def main() -> int:
                     method: item["final"][
                         "causal_ordered"
                         if args.label_mode == "reward-phase4"
-                        else "conservative_binary"
+                        else (
+                            "raw_multiclass"
+                            if args.label_mode == "semantic-phase"
+                            else "conservative_binary"
+                        )
                     ]
                     for method, item in results.items()
                 },

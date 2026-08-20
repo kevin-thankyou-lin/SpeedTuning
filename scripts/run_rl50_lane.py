@@ -73,6 +73,7 @@ def main():
                 "--decisions", "100000",
                 "--seed", str(train_seed),
                 "--device", "cpu",
+                "--terminate-on-success",
                 "--output", str(checkpoint),
                 "--report", str(training_report),
                 "--quiet",
@@ -95,6 +96,7 @@ def main():
                 "--speed-checkpoint", str(checkpoint),
                 "--seeds", seeds,
                 "--device", "cpu",
+                "--terminate-on-success",
                 *observation_args,
             ]
             run(eval_command, evaluation_path, task_dir / "eval.stderr")

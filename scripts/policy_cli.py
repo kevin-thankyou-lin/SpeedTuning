@@ -67,6 +67,11 @@ def add_base_policy_arguments(parser):
         action="store_true",
         help="Sample a new tea-bag pose on every reset (cube/insertion already vary).",
     )
+    parser.add_argument(
+        "--terminate-on-success",
+        action="store_true",
+        help="End the episode immediately when the task reaches its success reward.",
+    )
 
 
 def add_observation_arguments(parser):
@@ -148,6 +153,7 @@ def build_speed_env(args, reward_fn=None, video_path=None, seed=None):
         "frame_stack": args.frame_stack,
         "decision_frame_skip": args.frame_skip,
         "randomize_object_pose": args.randomize_object_pose,
+        "terminate_on_success": args.terminate_on_success,
     }
     if video_path is not None:
         common.update(save_video=True, video_path=video_path)

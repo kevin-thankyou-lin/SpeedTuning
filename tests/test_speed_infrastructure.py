@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -12,6 +13,7 @@ from speed_policy import (
     SpeedProfilePolicy,
     rollout_speed_policy,
 )
+from scripts.policy_cli import build_speed_env
 
 
 def test_speed_policy_adapter_validates_external_output():
@@ -61,6 +63,31 @@ def test_recorded_chunk_policy_pairs_with_speed_environment():
     result = rollout_speed_policy(env, FixedSpeedPolicy(1.0))
     assert result["success"]
     assert result["mean_speed"] == 1.0
+
+
+def test_cli_environment_can_terminate_on_success():
+    args = SimpleNamespace(
+        task="pick_and_place",
+        seed=0,
+        speed_values=(1.0,),
+        frame_stack=1,
+        frame_skip=10,
+        randomize_object_pose=False,
+        terminate_on_success=True,
+        base_policy="scripted",
+        speed_observation="state",
+        include_qpos=True,
+        include_qvel=True,
+        include_env_state=True,
+        device="cpu",
+    )
+    env = build_speed_env(args)
+    try:
+        result = rollout_speed_policy(env, FixedSpeedPolicy(1.0))
+    finally:
+        env.close()
+    assert result["success"]
+    assert result["physics_steps"] < 400
 
 
 @pytest.mark.rl

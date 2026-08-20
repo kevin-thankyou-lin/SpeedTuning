@@ -54,6 +54,7 @@ def main():
             sys.executable, "scripts/eval_speed_policy.py",
             "--config", config, "--task", task,
             "--speed-policy", "fixed", "--speed", "1",
+            "--terminate-on-success",
             "--seeds", seeds,
         ]
         with output.open("w") as stdout, (task_dir / "eval.stderr").open("w") as stderr:

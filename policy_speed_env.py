@@ -112,6 +112,7 @@ class SpeedPolicyEnv:
         observation_encoder: Callable[[dict], np.ndarray] | None = None,
         frame_stack=1,
         decision_frame_skip=10,
+        decision_mode="fixed",
         save_video=False,
         onscreen_render=False,
         video_path="output_video.mp4",
@@ -126,8 +127,11 @@ class SpeedPolicyEnv:
         self.observation_encoder = observation_encoder or StateObservationEncoder()
         self.frame_stack = int(frame_stack)
         self.decision_frame_skip = int(decision_frame_skip)
+        self.decision_mode = str(decision_mode)
         if self.frame_stack <= 0 or self.decision_frame_skip <= 0:
             raise ValueError("frame_stack and decision_frame_skip must be positive")
+        if self.decision_mode not in {"fixed", "phase_entry"}:
+            raise ValueError("decision_mode must be 'fixed' or 'phase_entry'")
         self.save_video = bool(save_video)
         self.onscreen_render = bool(onscreen_render)
         self.video_path = Path(video_path)
@@ -242,19 +246,31 @@ class SpeedPolicyEnv:
         if repeats <= 0:
             raise ValueError("frame_skip must be positive")
         resolved_speed = self.begin_decision(speed, quantized=quantized)
+        start_token = None
+        if self.decision_mode == "phase_entry":
+            token = getattr(self.observation_encoder, "decision_token", None)
+            start_token = None if token is None else token()
+            if start_token is None:
+                raise ValueError("phase_entry decisions require an encoder decision_token")
         total_reward = 0.0
         executed = 0
         info = {"success": False}
-        for _ in range(repeats):
+        while True:
             observation, reward, done, info = self._step_physics(resolved_speed)
             total_reward += float(reward)
             executed += 1
             if done:
                 break
+            if self.decision_mode == "phase_entry":
+                if self.observation_encoder.decision_token() != start_token:
+                    break
+            elif executed >= repeats:
+                break
         info = dict(info)
         info.update(
             decision_frame_skip=repeats,
             decision_physics_steps=executed,
+            speed_decision_mode=self.decision_mode,
             reward_aggregation="undiscounted_sum",
         )
         return observation, total_reward, done, info
@@ -397,6 +413,7 @@ def create_speed_env(
     observation_encoder=None,
     frame_stack=1,
     decision_frame_skip=10,
+    decision_mode="fixed",
     terminate_on_success=False,
     randomize_object_pose=False,
 ):
@@ -448,6 +465,7 @@ def create_speed_env(
         observation_encoder=observation_encoder,
         frame_stack=frame_stack,
         decision_frame_skip=decision_frame_skip,
+        decision_mode=decision_mode,
         onscreen_render=onscreen_render,
         save_video=save_video,
         video_path=video_path,
@@ -458,6 +476,7 @@ def create_speed_env(
                 "scripted" if chunk_predictor is None else "chunked"
             ),
             "randomize_object_pose": bool(randomize_object_pose),
+            "speed_decision_mode": decision_mode,
         },
     )
 

@@ -39,7 +39,9 @@ def run(command, stdout_path: Path, stderr_path: Path):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--method", choices=("phase", "full"), required=True)
+    parser.add_argument(
+        "--method", choices=("phase", "phase_entry", "full"), required=True
+    )
     parser.add_argument("--round-root", type=Path, required=True)
     args = parser.parse_args()
     lane = args.round_root / args.method
@@ -58,12 +60,16 @@ def main():
             }
             write_json(lane / "STATUS.json", status)
             observation_args = []
-            if args.method == "phase":
+            if args.method in {"phase", "phase_entry"}:
                 observation_args = [
                     "--speed-observation", "external",
                     "--observation-encoder-loader",
                     "oracle_phase_observation:create_oracle_phase_encoder",
                 ]
+            decision_args = (
+                ["--speed-decision-mode", "phase-entry"]
+                if args.method == "phase_entry" else []
+            )
             train_command = [
                 sys.executable,
                 "scripts/train_speed_policy.py",
@@ -78,6 +84,7 @@ def main():
                 "--report", str(training_report),
                 "--quiet",
                 *observation_args,
+                *decision_args,
             ]
             run(train_command, task_dir / "train.stdout", task_dir / "train.stderr")
             training = json.loads(training_report.read_text())
@@ -98,6 +105,7 @@ def main():
                 "--device", "cpu",
                 "--terminate-on-success",
                 *observation_args,
+                *decision_args,
             ]
             run(eval_command, evaluation_path, task_dir / "eval.stderr")
             evaluation = json.loads(evaluation_path.read_text())

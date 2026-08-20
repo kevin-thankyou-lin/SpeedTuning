@@ -78,6 +78,10 @@ class OraclePhaseEncoder:
         value[self.phase_index] = 1.0
         return value
 
+    def decision_token(self):
+        """Expose only phase identity so the environment can interrupt at a boundary."""
+        return self.phase_index
+
     def spec(self):
         return {
             "type": "oracle_phase_one_hot",

@@ -74,6 +74,7 @@ def test_cli_environment_can_terminate_on_success():
         frame_skip=10,
         randomize_object_pose=False,
         terminate_on_success=True,
+        speed_decision_mode="fixed",
         base_policy="scripted",
         speed_observation="state",
         include_qpos=True,
@@ -88,6 +89,25 @@ def test_cli_environment_can_terminate_on_success():
         env.close()
     assert result["success"]
     assert result["physics_steps"] < 400
+
+
+def test_phase_entry_mode_makes_one_decision_per_phase():
+    from oracle_phase_observation import OraclePhaseEncoder
+
+    env = create_speed_env(
+        "pick_and_place",
+        speed_values=(1.0,),
+        observation_encoder=OraclePhaseEncoder("pick_and_place"),
+        decision_mode="phase_entry",
+        terminate_on_success=True,
+        seed=0,
+    )
+    try:
+        result = rollout_speed_policy(env, FixedSpeedPolicy(1.0))
+    finally:
+        env.close()
+    assert result["success"]
+    assert result["decisions"] == 4
 
 
 @pytest.mark.rl

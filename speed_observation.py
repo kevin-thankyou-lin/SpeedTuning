@@ -250,6 +250,10 @@ class ObservationEncoderAdapter:
     def __call__(self, observation):
         return _finite_vector(self.encoder(observation), "observation encoder")
 
+    def decision_token(self):
+        token = getattr(self.encoder, "decision_token", None)
+        return None if token is None else token()
+
     def output_dim(self, env_state_dim):
         output_dim = getattr(self.encoder, "output_dim", None)
         if output_dim is None:

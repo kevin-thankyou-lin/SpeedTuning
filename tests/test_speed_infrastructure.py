@@ -110,6 +110,41 @@ def test_phase_entry_mode_makes_one_decision_per_phase():
     assert result["decisions"] == 4
 
 
+def test_tabular_phase_policy_checkpoint_round_trip(tmp_path: Path):
+    from oracle_phase_observation import OraclePhaseEncoder
+    from tabular_phase_speed import (
+        TabularTrainingConfig,
+        load_tabular_phase_speed_policy,
+        train_tabular_phase_speed_policy,
+    )
+
+    env = create_speed_env(
+        "pick_and_place",
+        speed_values=(1.0, 2.0),
+        observation_encoder=OraclePhaseEncoder("pick_and_place"),
+        decision_mode="phase_entry",
+        terminate_on_success=True,
+        seed=7,
+    )
+    checkpoint = tmp_path / "table.json"
+    try:
+        result = train_tabular_phase_speed_policy(
+            env,
+            checkpoint,
+            config=TabularTrainingConfig(episodes=2),
+            seed=7,
+        )
+        policy = load_tabular_phase_speed_policy(checkpoint)
+        rollout = rollout_speed_policy(env, policy)
+    finally:
+        env.close()
+
+    assert result["episodes"] == 2
+    assert len(result["schedule"]) == 4
+    assert checkpoint.exists()
+    assert rollout["decisions"] <= 4
+
+
 @pytest.mark.rl
 def test_prioritized_replay_samples_newest_transition():
     pytest.importorskip("torch")

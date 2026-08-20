@@ -40,7 +40,7 @@ def run(command, stdout_path: Path, stderr_path: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--method", choices=("phase", "phase_entry", "hybrid", "full"), required=True
+        "--method", choices=("phase", "phase_entry", "tabular", "hybrid", "full"), required=True
     )
     parser.add_argument("--round-root", type=Path, required=True)
     parser.add_argument("--task-label", choices=tuple(item[0] for item in TASKS))
@@ -54,7 +54,9 @@ def main():
         ]
         for label, task, config, train_seed in selected_tasks:
             task_dir = lane / label
-            checkpoint = task_dir / "policy.pt"
+            checkpoint = task_dir / (
+                "policy.json" if args.method == "tabular" else "policy.pt"
+            )
             training_report = task_dir / "training.json"
             status = {
                 "state": "training",
@@ -64,7 +66,7 @@ def main():
             }
             write_json(lane / "STATUS.json", status)
             observation_args = []
-            if args.method in {"phase", "phase_entry"}:
+            if args.method in {"phase", "phase_entry", "tabular"}:
                 observation_args = [
                     "--speed-observation", "external",
                     "--observation-encoder-loader",
@@ -77,26 +79,29 @@ def main():
                     "oracle_phase_observation:create_oracle_phase_state_encoder",
                 ]
             decision_args = []
-            if args.method == "phase_entry":
+            if args.method in {"phase_entry", "tabular"}:
                 decision_args = ["--speed-decision-mode", "phase-entry"]
             elif args.method == "hybrid":
                 decision_args = ["--speed-decision-mode", "fixed-or-phase-entry"]
-            train_command = [
-                sys.executable,
-                "scripts/train_speed_policy.py",
-                "--config", config,
-                "--task", task,
-                "--training-episodes", "50",
-                "--decisions", "100000",
-                "--seed", str(train_seed),
-                "--device", "cpu",
-                "--terminate-on-success",
-                "--output", str(checkpoint),
-                "--report", str(training_report),
-                "--quiet",
-                *observation_args,
-                *decision_args,
-            ]
+            if args.method == "tabular":
+                train_command = [
+                    sys.executable, "scripts/train_tabular_phase_speed.py",
+                    "--config", config, "--task", task,
+                    "--episodes", "50", "--seed", str(train_seed),
+                    "--terminate-on-success", "--output", str(checkpoint),
+                    "--report", str(training_report),
+                    *observation_args, *decision_args,
+                ]
+            else:
+                train_command = [
+                    sys.executable, "scripts/train_speed_policy.py",
+                    "--config", config, "--task", task,
+                    "--training-episodes", "50", "--decisions", "100000",
+                    "--seed", str(train_seed), "--device", "cpu",
+                    "--terminate-on-success", "--output", str(checkpoint),
+                    "--report", str(training_report), "--quiet",
+                    *observation_args, *decision_args,
+                ]
             run(train_command, task_dir / "train.stdout", task_dir / "train.stderr")
             training = json.loads(training_report.read_text())
             if training["summary"]["episodes"] != 50:
@@ -105,12 +110,21 @@ def main():
             eval_seed = train_seed + 100000
             seeds = ",".join(str(value) for value in range(eval_seed, eval_seed + 100))
             evaluation_path = task_dir / "evaluation.json"
+            eval_policy_args = (
+                [
+                    "--speed-policy", "external",
+                    "--speed-policy-loader",
+                    "tabular_phase_speed:load_tabular_phase_speed_policy",
+                ]
+                if args.method == "tabular"
+                else ["--speed-policy", "rainbow"]
+            )
             eval_command = [
                 sys.executable,
                 "scripts/eval_speed_policy.py",
                 "--config", config,
                 "--task", task,
-                "--speed-policy", "rainbow",
+                *eval_policy_args,
                 "--speed-checkpoint", str(checkpoint),
                 "--seeds", seeds,
                 "--device", "cpu",

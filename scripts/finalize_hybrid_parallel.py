@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge three parallel hybrid task workers against the cached native bank."""
+"""Merge three parallel task workers against the cached native bank."""
 
 from __future__ import annotations
 
@@ -28,11 +28,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--round-root", type=Path, required=True)
     parser.add_argument("--native-results", type=Path, required=True)
+    parser.add_argument("--method", default="hybrid")
     args = parser.parse_args()
     while True:
         failed = [
             task for task in TASKS
-            if (args.round_root / "workers" / task / "hybrid" / "FAILED").exists()
+            if (args.round_root / "workers" / task / args.method / "FAILED").exists()
         ]
         if failed:
             write_json(args.round_root / "FINAL_STATUS.json", {
@@ -40,7 +41,7 @@ def main():
             })
             return 1
         if all(
-            (args.round_root / "workers" / task / "hybrid" / "COMPLETE").exists()
+            (args.round_root / "workers" / task / args.method / "COMPLETE").exists()
             for task in TASKS
         ):
             break
@@ -50,7 +51,7 @@ def main():
     result = {}
     for task in TASKS:
         candidate = json.loads(
-            (args.round_root / "workers" / task / "hybrid" / "RESULTS.json").read_text()
+            (args.round_root / "workers" / task / args.method / "RESULTS.json").read_text()
         )[task]
         candidate_eval = candidate["evaluation"]
         native_eval = native[task]
@@ -68,7 +69,7 @@ def main():
                 else native_steps / candidate_steps
             ),
         }
-    write_json(args.round_root / "COMPARISON.json", {"hybrid": result})
+    write_json(args.round_root / "COMPARISON.json", {args.method: result})
     write_json(args.round_root / "FINAL_STATUS.json", {"state": "complete"})
     (args.round_root / "COMPLETE").touch()
     return 0

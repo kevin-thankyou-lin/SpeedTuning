@@ -156,3 +156,37 @@ def test_public_rainbow_training_checkpoint_round_trip(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="Checkpoint environment"):
         rollout_speed_policy(randomized_env, policy)
+
+
+@pytest.mark.rl
+def test_rainbow_training_stops_after_completed_episode(tmp_path: Path):
+    pytest.importorskip("torch")
+    from speed_training import RainbowTrainingConfig, train_rainbow_speed_policy
+
+    env = create_speed_env(
+        "pick_and_place", speed_values=(2.0,), seed=4, terminate_on_success=True
+    )
+    try:
+        result = train_rainbow_speed_policy(
+            env,
+            tmp_path / "episode-limited.pt",
+            config=RainbowTrainingConfig(
+                decisions=100,
+                max_episodes=1,
+                memory_size=16,
+                batch_size=4,
+                learning_starts=4,
+                frame_skip=50,
+                gradient_steps=1,
+                hidden_dim=16,
+                atom_size=11,
+                n_step=1,
+            ),
+            seed=4,
+            device="cpu",
+            progress=False,
+        )
+    finally:
+        env.close()
+    assert result["episodes"] == 1
+    assert result["decisions"] < 100

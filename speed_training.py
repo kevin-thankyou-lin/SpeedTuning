@@ -17,6 +17,7 @@ class RainbowTrainingConfig:
     """Practical defaults for speed-policy experiments, not paper reproduction."""
 
     decisions: int = 5_000
+    max_episodes: int | None = None
     memory_size: int = 100_000
     batch_size: int = 128
     learning_starts: int = 512
@@ -73,6 +74,8 @@ class RainbowTrainingConfig:
             raise ValueError("beta_schedule must be 'linear' or 'legacy'")
         if self.checkpoint_interval < 0:
             raise ValueError("checkpoint_interval cannot be negative")
+        if self.max_episodes is not None and self.max_episodes <= 0:
+            raise ValueError("max_episodes must be positive when set")
 
 
 def _normalization_stats(states):
@@ -184,7 +187,9 @@ def train_rainbow_speed_policy(
             if update_count % config.target_update == 0:
                 agent._target_soft_update()
 
+    completed_decisions = 0
     for decision in range(1, config.decisions + 1):
+        completed_decisions = decision
         action = agent.select_action(state)
         next_state, reward, done, info = agent.step(action, config.frame_skip)
         state_history.append(next_state.copy())
@@ -239,6 +244,8 @@ def train_rainbow_speed_policy(
                 # The retained SpeedTuning trainer optimized once per decision,
                 # batching those updates at the end of each episode.
                 update_network(episode_decisions * config.gradient_steps)
+            if config.max_episodes is not None and episode_index >= config.max_episodes:
+                break
             state = env.reset()
             state_history.append(state.copy())
             episode_return = 0.0
@@ -270,14 +277,14 @@ def train_rainbow_speed_policy(
         config,
         seed,
         metadata,
-        completed_decisions=config.decisions,
+        completed_decisions=completed_decisions,
     )
     torch.save(payload, checkpoint_path)
 
     finite_losses = bool(np.isfinite(losses).all()) if losses else True
     return {
         "checkpoint": str(checkpoint_path),
-        "decisions": config.decisions,
+        "decisions": completed_decisions,
         "episodes": len(episodes),
         "successes": sum(int(item["success"]) for item in episodes),
         "updates": update_count,

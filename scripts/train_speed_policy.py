@@ -46,6 +46,11 @@ def parse_args():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--speed-values", type=comma_floats, default=(1.0, 1.5, 2.0, 2.5, 3.0))
     parser.add_argument("--decisions", type=int, default=5_000)
+    parser.add_argument(
+        "--training-episodes",
+        type=int,
+        help="Stop after this many completed training episodes; decisions remains a ceiling.",
+    )
     parser.add_argument("--memory-size", type=int, default=100_000)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--learning-starts", type=int, default=512)
@@ -112,6 +117,7 @@ def main():
         env = build_speed_env(args, reward_fn=reward_fn)
         config = RainbowTrainingConfig(
             decisions=args.decisions,
+            max_episodes=args.training_episodes,
             memory_size=args.memory_size,
             batch_size=args.batch_size,
             learning_starts=args.learning_starts,

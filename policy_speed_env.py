@@ -130,8 +130,10 @@ class SpeedPolicyEnv:
         self.decision_mode = str(decision_mode)
         if self.frame_stack <= 0 or self.decision_frame_skip <= 0:
             raise ValueError("frame_stack and decision_frame_skip must be positive")
-        if self.decision_mode not in {"fixed", "phase_entry"}:
-            raise ValueError("decision_mode must be 'fixed' or 'phase_entry'")
+        if self.decision_mode not in {"fixed", "phase_entry", "fixed_or_phase_entry"}:
+            raise ValueError(
+                "decision_mode must be fixed, phase_entry, or fixed_or_phase_entry"
+            )
         self.save_video = bool(save_video)
         self.onscreen_render = bool(onscreen_render)
         self.video_path = Path(video_path)
@@ -247,7 +249,7 @@ class SpeedPolicyEnv:
             raise ValueError("frame_skip must be positive")
         resolved_speed = self.begin_decision(speed, quantized=quantized)
         start_token = None
-        if self.decision_mode == "phase_entry":
+        if self.decision_mode in {"phase_entry", "fixed_or_phase_entry"}:
             token = getattr(self.observation_encoder, "decision_token", None)
             start_token = None if token is None else token()
             if start_token is None:
@@ -261,10 +263,10 @@ class SpeedPolicyEnv:
             executed += 1
             if done:
                 break
-            if self.decision_mode == "phase_entry":
+            if self.decision_mode in {"phase_entry", "fixed_or_phase_entry"}:
                 if self.observation_encoder.decision_token() != start_token:
                     break
-            elif executed >= repeats:
+            if self.decision_mode != "phase_entry" and executed >= repeats:
                 break
         info = dict(info)
         info.update(

@@ -74,7 +74,7 @@ def add_base_policy_arguments(parser):
     )
     parser.add_argument(
         "--speed-decision-mode",
-        choices=("fixed", "phase-entry"),
+        choices=("fixed", "phase-entry", "fixed-or-phase-entry"),
         default="fixed",
         help="Choose every fixed block or only at reset and phase transitions.",
     )

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from speed_observation import StateObservationEncoder
+
 
 PHASES = ("pre_grasp", "grasp_lift", "transport", "interaction")
 TASK_OBJECTS = {"pick_and_place": 1, "tea_bag": 1, "insertion": 2}
@@ -93,3 +95,37 @@ class OraclePhaseEncoder:
 
 def create_oracle_phase_encoder(task_name: str, **_kwargs):
     return OraclePhaseEncoder(task_name)
+
+
+class OraclePhaseStateEncoder:
+    """Concatenate full privileged state with the explicit oracle phase ID."""
+
+    requires_images = False
+
+    def __init__(self, task_name: str):
+        self.phase = OraclePhaseEncoder(task_name)
+        self.state = StateObservationEncoder()
+
+    def reset(self):
+        self.phase.reset()
+        self.state.reset()
+
+    def __call__(self, observation):
+        return np.concatenate((self.state(observation), self.phase(observation)))
+
+    def output_dim(self, env_state_dim):
+        return self.state.output_dim(env_state_dim) + len(PHASES)
+
+    def decision_token(self):
+        return self.phase.decision_token()
+
+    def spec(self):
+        return {
+            "type": "full_state_plus_oracle_phase_one_hot",
+            "state": self.state.spec(),
+            "phase": self.phase.spec(),
+        }
+
+
+def create_oracle_phase_state_encoder(task_name: str, **_kwargs):
+    return OraclePhaseStateEncoder(task_name)

@@ -40,15 +40,19 @@ def run(command, stdout_path: Path, stderr_path: Path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--method", choices=("phase", "phase_entry", "full"), required=True
+        "--method", choices=("phase", "phase_entry", "hybrid", "full"), required=True
     )
     parser.add_argument("--round-root", type=Path, required=True)
+    parser.add_argument("--task-label", choices=tuple(item[0] for item in TASKS))
     args = parser.parse_args()
     lane = args.round_root / args.method
     lane.mkdir(parents=True, exist_ok=True)
     results = {}
     try:
-        for label, task, config, train_seed in TASKS:
+        selected_tasks = [
+            item for item in TASKS if args.task_label is None or item[0] == args.task_label
+        ]
+        for label, task, config, train_seed in selected_tasks:
             task_dir = lane / label
             checkpoint = task_dir / "policy.pt"
             training_report = task_dir / "training.json"
@@ -66,10 +70,17 @@ def main():
                     "--observation-encoder-loader",
                     "oracle_phase_observation:create_oracle_phase_encoder",
                 ]
-            decision_args = (
-                ["--speed-decision-mode", "phase-entry"]
-                if args.method == "phase_entry" else []
-            )
+            elif args.method == "hybrid":
+                observation_args = [
+                    "--speed-observation", "external",
+                    "--observation-encoder-loader",
+                    "oracle_phase_observation:create_oracle_phase_state_encoder",
+                ]
+            decision_args = []
+            if args.method == "phase_entry":
+                decision_args = ["--speed-decision-mode", "phase-entry"]
+            elif args.method == "hybrid":
+                decision_args = ["--speed-decision-mode", "fixed-or-phase-entry"]
             train_command = [
                 sys.executable,
                 "scripts/train_speed_policy.py",

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import statistics
 import sys
@@ -19,7 +20,9 @@ from learned_phase_observation import LearnedPhaseEncoder  # noqa: E402
 
 def write_json(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    temporary.replace(path)
 
 
 def native_results(ledger: Path, seeds: list[int]) -> list[dict]:
@@ -35,6 +38,28 @@ def native_results(ledger: Path, seeds: list[int]) -> list[dict]:
     if set(by_seed) != wanted:
         raise ValueError("native ledger does not exactly cover evaluation seeds")
     return [by_seed[seed] for seed in seeds]
+
+
+def load_progress(path: Path, identity: dict) -> dict[int, dict]:
+    if not path.exists():
+        return {}
+    progress = json.loads(path.read_text())
+    if progress.get("identity") != identity:
+        raise ValueError("evaluation checkpoint identity mismatch")
+    return {int(item["seed"]): item for item in progress.get("rollouts", [])}
+
+
+def write_progress(path: Path, identity: dict, seeds: list[int], completed: dict, terminal=False):
+    write_json(
+        path,
+        {
+            "schema": "one-reset-evaluation-progress-v1",
+            "terminal": bool(terminal),
+            "identity": identity,
+            "completed_states": len(completed),
+            "rollouts": [completed[value] for value in seeds if value in completed],
+        },
+    )
 
 
 def summarize(schedule, native: list[dict], candidate: list[dict]) -> dict:
@@ -80,8 +105,20 @@ def main() -> int:
         schedule = checkpoint["schedule"]
     seeds = [int(seed) for seed in task["evaluation_seeds"]]
     native = native_results(Path(task["native_ledger"]), seeds)
-    candidate = [
-        run_phase_schedule(
+    progress_path = args.output.with_suffix(args.output.suffix + ".progress.json")
+    identity = {
+        "contract_sha256": hashlib.sha256(args.contract.read_bytes()).hexdigest(),
+        "task": args.task,
+        "method": args.method,
+        "schedule": list(schedule),
+        "evaluation_seeds": seeds,
+        "phase_detector": detector,
+    }
+    completed = load_progress(progress_path, identity)
+    for seed in seeds:
+        if seed in completed:
+            continue
+        completed[seed] = run_phase_schedule(
             task["runtime_task"],
             schedule,
             seed,
@@ -89,8 +126,8 @@ def main() -> int:
                 None if detector is None else LearnedPhaseEncoder(**detector)
             ),
         )
-        for seed in seeds
-    ]
+        write_progress(progress_path, identity, seeds, completed)
+    candidate = [completed[seed] for seed in seeds]
     result = {
         "schema": "one-reset-generalization-result-v1",
         "task": args.task,
@@ -103,6 +140,7 @@ def main() -> int:
         **summarize(schedule, native, candidate),
     }
     write_json(args.output, result)
+    write_progress(progress_path, identity, seeds, completed, terminal=True)
     print(json.dumps({key: value for key, value in result.items() if key != "rollouts"}, sort_keys=True))
     return 0
 

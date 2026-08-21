@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import os
 import sys
 from pathlib import Path
 
@@ -17,6 +18,7 @@ PROPRIO_FEATURES = (
     "gripper.left", "gripper.right",
 )
 _PREDICTORS = {}
+_THREADS_CONFIGURED = False
 
 
 def sha256(path):
@@ -38,6 +40,8 @@ class LearnedPhaseEncoder:
         model_source_sha256,
         device="auto",
         history_stride=5,
+        cpu_threads_per_worker=2,
+        render_camera_names=("angle",),
         predictor=None,
     ):
         self.checkpoint_path = Path(checkpoint_path).resolve()
@@ -50,7 +54,28 @@ class LearnedPhaseEncoder:
         self.history_stride = int(history_stride)
         if self.history_stride <= 0:
             raise ValueError("history_stride must be positive")
+        self.cpu_threads_per_worker = int(cpu_threads_per_worker)
+        if self.cpu_threads_per_worker <= 0:
+            raise ValueError("cpu_threads_per_worker must be positive")
+        self.render_camera_names = tuple(render_camera_names)
+        if self.render_camera_names != ("angle",):
+            raise ValueError("sealed learned detector requires only the angle camera")
         if predictor is None:
+            global _THREADS_CONFIGURED
+            if not _THREADS_CONFIGURED:
+                import torch
+
+                configured_threads = int(
+                    os.environ.get(
+                        "SPEEDTUNING_TORCH_THREADS",
+                        str(self.cpu_threads_per_worker),
+                    )
+                )
+                if configured_threads != self.cpu_threads_per_worker:
+                    raise ValueError("detector CPU thread limit differs from worker environment")
+                torch.set_num_threads(configured_threads)
+                torch.set_num_interop_threads(1)
+                _THREADS_CONFIGURED = True
             actual = {
                 "checkpoint": sha256(self.checkpoint_path),
                 "inference": sha256(self.source_root / "phase_detector/rgb_inference.py"),
@@ -127,6 +152,8 @@ class LearnedPhaseEncoder:
             "model_source_sha256": self.hashes["model_source"],
             "inputs": "current angle RGB plus causal robot-only proprioception",
             "history_stride": self.history_stride,
+            "cpu_threads_per_worker": self.cpu_threads_per_worker,
+            "render_camera_names": list(self.render_camera_names),
             "temporal_postprocessing": "none_raw_argmax",
         }
 

@@ -459,6 +459,7 @@ def create_speed_env(
         )
     if getattr(observation_encoder, "requires_images", False) and not render_images:
         raise ValueError("The configured speed observation encoder requires images")
+    render_camera_names = getattr(observation_encoder, "render_camera_names", None)
 
     if chunk_predictor is None:
         env = make_ee_sim_env(
@@ -467,6 +468,7 @@ def create_speed_env(
             seed=seed,
             object_pose=object_pose,
             randomize_object_pose=randomize_object_pose,
+            render_camera_names=render_camera_names,
         )
         action_source = WaypointActionSource(make_scripted_policy(task_name))
     else:
@@ -476,6 +478,7 @@ def create_speed_env(
             seed=seed,
             object_pose=object_pose,
             randomize_object_pose=randomize_object_pose,
+            render_camera_names=render_camera_names,
         )
         action_source = ChunkedActionSource(chunk_predictor)
 

@@ -50,7 +50,7 @@ def wait_paths(paths: list[Path], processes: list[subprocess.Popen], label: str)
 
 def agent_command(agent_root: Path, runner_root: Path) -> list[str]:
     prompt = (
-        "Read AGENTS.md and TASK_CONTRACT.md completely. Execute the full one-reset oracle-phase "
+        "Read AGENTS.md and TASK_CONTRACT.md completely. Execute the full one-reset configured-phase "
         "speed search using only this lane's runner results and MP4s. Freeze one safe successful "
         "schedule with select, then write terminal STATUS.json and FINAL_REPORT.md."
     )

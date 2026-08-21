@@ -22,6 +22,12 @@ EXPECTED = {
     "inference_sha256": "1398e1d1b5b4e682f009c6501598e651a516341f6d60822f40fc575a40061815",
     "model_source_sha256": "8a47f110f19f4e52a39b7e0e4f2273c2895690f6332ab17a4b71c8eb5ce4ae37",
 }
+WORKER_ENV = {
+    "OMP_NUM_THREADS": "2",
+    "MKL_NUM_THREADS": "2",
+    "OPENBLAS_NUM_THREADS": "2",
+    "SPEEDTUNING_TORCH_THREADS": "2",
+}
 TASK_NAMES = {"pick": "pick_and_place", "tea": "tea_bag", "insertion": "insertion"}
 
 
@@ -43,7 +49,12 @@ def log(message: str) -> None:
 def run_evaluations(contract_path: Path, output_root: Path) -> dict:
     processes = []
     logs = output_root.parent / "logs"
-    env = dict(os.environ, MUJOCO_GL="egl", PYOPENGL_PLATFORM="egl")
+    env = dict(
+        os.environ,
+        MUJOCO_GL="egl",
+        PYOPENGL_PLATFORM="egl",
+        **WORKER_ENV,
+    )
     for lane in TASK_NAMES:
         for method in ("vlm", "tabular"):
             output = output_root / lane / f"{method}.json"
@@ -106,7 +117,7 @@ def prepare_retrain_contract(source_root: Path, retrain_root: Path, detector: di
         target_agent = retrain_root / "vlm_agents" / lane
         target_agent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_agent / "AGENTS.md", target_agent / "AGENTS.md")
-        shutil.copy2(source_agent / "one_reset.py", target_agent / "one_reset.py")
+        shutil.copy2(REPO_ROOT / "scripts" / "one_reset_client.py", target_agent / "one_reset.py")
         (target_agent / "TASK_CONTRACT.md").write_text(
             learned_task_contract(TASK_NAMES[lane])
         )
@@ -121,10 +132,15 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--detector-source", type=Path, required=True)
     parser.add_argument("--detector-checkpoint", type=Path, required=True)
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     source_root = args.source_root.resolve()
     root = args.root.resolve()
-    root.mkdir(parents=True, exist_ok=False)
+    if args.resume:
+        if not root.is_dir():
+            raise RuntimeError("resume root does not exist")
+    else:
+        root.mkdir(parents=True, exist_ok=False)
 
     detector_source = args.detector_source.resolve()
     detector_checkpoint = args.detector_checkpoint.resolve()
@@ -139,10 +155,16 @@ def main() -> int:
         "checkpoint_path": str(detector_checkpoint),
         "source_root": str(detector_source),
         **actual,
-        "device": "cpu",
+        "device": "cuda",
         "history_stride": 5,
+        "cpu_threads_per_worker": 2,
+        "render_camera_names": ["angle"],
     }
-    write_json(root / "DETECTOR.json", detector)
+    detector_path = root / "DETECTOR.json"
+    if args.resume and detector_path.exists():
+        if json.loads(detector_path.read_text()) != detector:
+            raise RuntimeError("resume detector identity mismatch")
+    write_json(detector_path, detector)
 
     replay_contract = json.loads((source_root / "CONTRACT.json").read_text())
     replay_contract["phase_detector"] = detector
@@ -156,7 +178,12 @@ def main() -> int:
     retrain_root = root / "retrain"
     prepare_retrain_contract(source_root, retrain_root, detector)
     log("starting one-reset VLM and tabular relearning with learned detector")
-    env = dict(os.environ, MUJOCO_GL="egl", PYOPENGL_PLATFORM="egl")
+    env = dict(
+        os.environ,
+        MUJOCO_GL="egl",
+        PYOPENGL_PLATFORM="egl",
+        **WORKER_ENV,
+    )
     code = subprocess.call(
         [str(PYTHON), str(REPO_ROOT / "scripts" / "manage_one_reset_round.py"),
          "--root", str(retrain_root)],

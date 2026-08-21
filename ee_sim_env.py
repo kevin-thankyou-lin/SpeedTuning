@@ -33,6 +33,7 @@ from sim_tasks import (
 # Kept for compatibility with the historical scripts. New code should pass
 # render_images=False to make_ee_sim_env instead.
 DISABLE_RENDER = [False]
+CAMERA_IDS = {"top": "top", "angle": "angle", "vis": "front_close"}
 
 
 def make_ee_sim_env(
@@ -41,6 +42,7 @@ def make_ee_sim_env(
     seed: int | None = None,
     object_pose=None,
     randomize_object_pose: bool = False,
+    render_camera_names=None,
 ):
     """Create an end-effector-control environment for a SpeedTuning sim task.
 
@@ -64,6 +66,7 @@ def make_ee_sim_env(
         render_images=render_images,
         object_pose=object_pose,
         randomize_object_pose=randomize_object_pose,
+        render_camera_names=render_camera_names,
     )
     return control.Environment(
         physics,
@@ -82,6 +85,7 @@ class BimanualViperXEETask(base.Task):
         render_images: bool = True,
         object_pose=None,
         randomize_object_pose: bool = False,
+        render_camera_names=None,
     ):
         super().__init__(random=random)
         self.render_images = render_images
@@ -89,6 +93,12 @@ class BimanualViperXEETask(base.Task):
             None if object_pose is None else np.asarray(object_pose).copy()
         )
         self.randomize_object_pose = bool(randomize_object_pose)
+        self.render_camera_names = tuple(
+            CAMERA_IDS if render_camera_names is None else render_camera_names
+        )
+        unknown = set(self.render_camera_names) - set(CAMERA_IDS)
+        if unknown:
+            raise ValueError(f"Unknown render cameras: {sorted(unknown)}")
 
     def before_step(self, action, physics):
         action = np.asarray(action, dtype=np.float64)
@@ -163,9 +173,8 @@ class BimanualViperXEETask(base.Task):
         )
         if self.render_images and not DISABLE_RENDER[0]:
             obs["images"] = {
-                "top": physics.render(height=480, width=640, camera_id="top"),
-                "angle": physics.render(height=480, width=640, camera_id="angle"),
-                "vis": physics.render(height=480, width=640, camera_id="front_close"),
+                name: physics.render(height=480, width=640, camera_id=CAMERA_IDS[name])
+                for name in self.render_camera_names
             }
         obs["mocap_pose_left"] = np.concatenate(
             [physics.data.mocap_pos[0], physics.data.mocap_quat[0]]

@@ -69,3 +69,5 @@ def test_learned_phase_encoder_exposes_raw_detector_argmax():
     assert encoder(value).tolist() == [0, 0, 1, 0]
     assert encoder.decision_token() == 2
     assert encoder.spec()["temporal_postprocessing"] == "none_raw_argmax"
+    assert encoder.spec()["render_camera_names"] == ["angle"]
+    assert encoder.spec()["cpu_threads_per_worker"] == 2

@@ -45,12 +45,20 @@ def main() -> int:
     commands.add_parser("info")
     test = commands.add_parser("test")
     test.add_argument("schedule")
+    score = commands.add_parser("score")
+    score.add_argument("anchor_schedule_hash")
+    score.add_argument("schedule")
+    score.add_argument("--safe-success-probability", type=float, required=True)
     select = commands.add_parser("select")
     select.add_argument("schedule_hash")
     args = parser.parse_args()
     payload = {"command": args.command}
     if args.command == "test":
         payload["schedule"] = parse_schedule(args.schedule)
+    elif args.command == "score":
+        payload["anchor_schedule_hash"] = args.anchor_schedule_hash
+        payload["schedule"] = parse_schedule(args.schedule)
+        payload["safe_success_probability"] = args.safe_success_probability
     elif args.command == "select":
         payload["schedule_hash"] = args.schedule_hash
     print(json.dumps(request(args.api, payload), indent=2, sort_keys=True))

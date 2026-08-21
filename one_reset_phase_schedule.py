@@ -26,6 +26,79 @@ def validate_schedule(values) -> tuple[float, ...]:
     return schedule
 
 
+def estimate_phase_workload(result: dict) -> dict[str, float]:
+    """Estimate native policy work per phase from one completed rollout.
+
+    A segment that took ``n`` physics steps at speed ``s`` represents roughly
+    ``n * s`` native-speed policy steps. Repeated detector segments are summed.
+    """
+
+    workloads = {phase: 0.0 for phase in PHASES}
+    decisions = list(result.get("phase_decisions", ()))
+    final_step = int(result["physics_steps"])
+    for index, decision in enumerate(decisions):
+        start = int(decision["physics_step"])
+        end = (
+            int(decisions[index + 1]["physics_step"])
+            if index + 1 < len(decisions)
+            else final_step
+        )
+        phase = str(decision["phase"])
+        if phase not in workloads:
+            raise ValueError(f"unknown phase in decision trace: {phase}")
+        workloads[phase] += max(end - start, 0) * float(decision["speed"])
+    return workloads
+
+
+def score_schedule_change(
+    anchor_result: dict,
+    candidate_schedule,
+    *,
+    safe_success_probability: float = 1.0,
+) -> dict:
+    """Predict absolute time saved by a candidate relative to an anchor.
+
+    The VLM supplies a conservative probability that the untested candidate
+    will remain safe and successful. This is an acquisition score, not rollout
+    evidence and not a reliability claim.
+    """
+
+    anchor_schedule = validate_schedule(anchor_result["schedule"])
+    candidate_schedule = validate_schedule(candidate_schedule)
+    probability = float(safe_success_probability)
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("safe_success_probability must be between 0 and 1")
+    workloads = estimate_phase_workload(anchor_result)
+    anchor_steps = sum(
+        workloads[phase] / speed
+        for phase, speed in zip(PHASES, anchor_schedule)
+    )
+    candidate_steps = sum(
+        workloads[phase] / speed
+        for phase, speed in zip(PHASES, candidate_schedule)
+    )
+    contributions = {
+        phase: workloads[phase] * (1.0 / old - 1.0 / new)
+        for phase, old, new in zip(PHASES, anchor_schedule, candidate_schedule)
+    }
+    saved = anchor_steps - candidate_steps
+    return {
+        "anchor_schedule": list(anchor_schedule),
+        "candidate_schedule": list(candidate_schedule),
+        "phase_workload_steps": workloads,
+        "phase_predicted_steps_saved": contributions,
+        "predicted_anchor_steps": anchor_steps,
+        "predicted_candidate_steps": candidate_steps,
+        "predicted_absolute_steps_saved": saved,
+        "predicted_relative_speedup": (
+            anchor_steps / candidate_steps if candidate_steps > 0 else None
+        ),
+        "safe_success_probability": probability,
+        "expected_absolute_steps_saved": probability * saved,
+        "warning": "acquisition estimate only; testing supplies reliability evidence",
+    }
+
+
 @dataclass
 class PhaseSchedulePolicy:
     schedule: tuple[float, ...]

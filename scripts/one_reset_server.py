@@ -18,8 +18,10 @@ if str(REPO_ROOT) not in sys.path:
 from one_reset_phase_schedule import (
     ALLOWED_SPEEDS,
     PHASES,
+    estimate_phase_workload,
     run_phase_schedule,
     sample_object_pose,
+    score_schedule_change,
     validate_schedule,
 )
 from learned_phase_observation import LearnedPhaseEncoder
@@ -96,6 +98,7 @@ class OneResetServer:
             "success_only_acceleration": result["success_only_acceleration"],
             "safety_violation": result["safety_violation"],
             "phase_decisions": result["phase_decisions"],
+            "phase_workload_steps": estimate_phase_workload(result),
             "video_path": (
                 None if video_path is None else f"media/{Path(video_path).name}"
             ),
@@ -152,12 +155,33 @@ class OneResetServer:
         write_json(self.root / "public" / "SELECTION.json", public)
         return public
 
+    def score(self, anchor_id: str, schedule, safe_success_probability: float) -> dict:
+        anchor = self.state["results"].get(anchor_id)
+        if anchor is None:
+            raise ValueError("anchor schedule has not been tested")
+        if not anchor["success"] or anchor["safety_violation"] is not None:
+            raise ValueError("anchor schedule must have succeeded safely")
+        return {
+            "anchor_schedule_hash": anchor_id,
+            **score_schedule_change(
+                anchor,
+                schedule,
+                safe_success_probability=safe_success_probability,
+            ),
+        }
+
     def handle(self, request: dict) -> dict:
         command = request.get("command")
         if command == "info":
             return self.info()
         if command == "test":
             return self.test(request.get("schedule"))
+        if command == "score":
+            return self.score(
+                str(request.get("anchor_schedule_hash")),
+                request.get("schedule"),
+                float(request.get("safe_success_probability", 1.0)),
+            )
         if command == "select":
             return self.select(str(request.get("schedule_hash")))
         raise ValueError(f"unknown command: {command}")

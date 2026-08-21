@@ -2,8 +2,10 @@ import numpy as np
 import pytest
 
 from one_reset_phase_schedule import (
+    estimate_phase_workload,
     run_phase_schedule,
     sample_object_pose,
+    score_schedule_change,
     validate_schedule,
 )
 
@@ -31,3 +33,54 @@ def test_sampled_pose_contains_only_task_objects():
     assert len(sample_object_pose("pick_and_place", 90317)) == 7
     assert len(sample_object_pose("tea_bag", 90317)) == 7
     assert len(sample_object_pose("insertion", 90317)) == 14
+
+
+def test_expected_time_score_prioritizes_absolute_steps_saved():
+    anchor = {
+        "schedule": [1, 1, 1, 1],
+        "physics_steps": 250,
+        "phase_decisions": [
+            {"phase": "pre_grasp", "physics_step": 0, "speed": 1},
+            {"phase": "grasp_lift", "physics_step": 150, "speed": 1},
+            {"phase": "transport", "physics_step": 200, "speed": 1},
+            {"phase": "interaction", "physics_step": 230, "speed": 1},
+        ],
+    }
+    assert estimate_phase_workload(anchor) == {
+        "pre_grasp": 150.0,
+        "grasp_lift": 50.0,
+        "transport": 30.0,
+        "interaction": 20.0,
+    }
+    long_phase = score_schedule_change(
+        anchor, [1.5, 1, 1, 1], safe_success_probability=0.8
+    )
+    short_phase = score_schedule_change(
+        anchor, [1, 1, 1, 4], safe_success_probability=1.0
+    )
+    assert long_phase["predicted_absolute_steps_saved"] == pytest.approx(50.0)
+    assert long_phase["expected_absolute_steps_saved"] == pytest.approx(40.0)
+    assert short_phase["predicted_absolute_steps_saved"] == pytest.approx(15.0)
+    assert long_phase["expected_absolute_steps_saved"] > short_phase["expected_absolute_steps_saved"]
+
+
+def test_expected_time_score_aggregates_repeated_detector_phases():
+    anchor = {
+        "schedule": [2, 1, 1, 1],
+        "physics_steps": 40,
+        "phase_decisions": [
+            {"phase": "pre_grasp", "physics_step": 0, "speed": 2},
+            {"phase": "grasp_lift", "physics_step": 10, "speed": 1},
+            {"phase": "pre_grasp", "physics_step": 20, "speed": 2},
+            {"phase": "grasp_lift", "physics_step": 25, "speed": 1},
+        ],
+    }
+    assert estimate_phase_workload(anchor) == {
+        "pre_grasp": 30.0,
+        "grasp_lift": 25.0,
+        "transport": 0.0,
+        "interaction": 0.0,
+    }
+    score = score_schedule_change(anchor, [3, 1, 1, 1])
+    assert score["predicted_anchor_steps"] == pytest.approx(40.0)
+    assert score["predicted_candidate_steps"] == pytest.approx(35.0)

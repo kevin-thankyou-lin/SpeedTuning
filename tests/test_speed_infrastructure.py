@@ -91,6 +91,38 @@ def test_cli_environment_can_terminate_on_success():
     assert result["physics_steps"] < 400
 
 
+def test_cli_environment_reuses_explicit_object_pose():
+    pose = (0.03, 0.51, 0.05, 1.0, 0.0, 0.0, 0.0)
+    args = SimpleNamespace(
+        task="pick_and_place",
+        seed=17,
+        speed_values=(1.0,),
+        frame_stack=1,
+        frame_skip=10,
+        randomize_object_pose=False,
+        object_pose=pose,
+        terminate_on_success=True,
+        speed_decision_mode="fixed",
+        base_policy="scripted",
+        speed_observation="state",
+        include_qpos=True,
+        include_qvel=True,
+        include_env_state=True,
+        device="cpu",
+    )
+    env = build_speed_env(args)
+    try:
+        first = env.reset()
+        first_state = env.cur_ts.observation["env_state"].copy()
+        second = env.reset()
+        second_state = env.cur_ts.observation["env_state"].copy()
+    finally:
+        env.close()
+    assert first.shape == second.shape
+    np.testing.assert_allclose(first_state, pose)
+    np.testing.assert_allclose(second_state, pose)
+
+
 def test_phase_entry_mode_makes_one_decision_per_phase():
     from oracle_phase_observation import OraclePhaseEncoder
 

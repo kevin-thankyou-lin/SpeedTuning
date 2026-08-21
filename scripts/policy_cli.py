@@ -43,6 +43,16 @@ def json_object(value):
     return parsed
 
 
+def json_float_array(value):
+    parsed = json.loads(value)
+    if not isinstance(parsed, list) or not parsed:
+        raise ValueError("Expected a non-empty JSON array")
+    try:
+        return tuple(float(item) for item in parsed)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Object pose must contain only numbers") from exc
+
+
 def add_base_policy_arguments(parser):
     parser.add_argument(
         "--base-policy",
@@ -66,6 +76,11 @@ def add_base_policy_arguments(parser):
         "--randomize-object-pose",
         action="store_true",
         help="Sample a new tea-bag pose on every reset (cube/insertion already vary).",
+    )
+    parser.add_argument(
+        "--object-pose",
+        type=json_float_array,
+        help="Freeze every reset to this explicit simulator object pose.",
     )
     parser.add_argument(
         "--terminate-on-success",
@@ -160,6 +175,7 @@ def build_speed_env(args, reward_fn=None, video_path=None, seed=None):
         "decision_frame_skip": args.frame_skip,
         "decision_mode": getattr(args, "speed_decision_mode", "fixed").replace("-", "_"),
         "randomize_object_pose": args.randomize_object_pose,
+        "object_pose": getattr(args, "object_pose", None),
         "terminate_on_success": args.terminate_on_success,
     }
     if video_path is not None:

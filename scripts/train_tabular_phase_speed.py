@@ -15,7 +15,12 @@ if str(REPO_ROOT) not in sys.path:
 
 from experiment_config import defaults_from_argv  # noqa: E402
 from policy_speed_env import make_speed_reward  # noqa: E402
-from scripts.policy_cli import add_base_policy_arguments, add_observation_arguments, build_speed_env  # noqa: E402
+from scripts.policy_cli import (  # noqa: E402
+    add_base_policy_arguments,
+    add_observation_arguments,
+    build_speed_env,
+    comma_floats,
+)
 from tabular_phase_speed import TabularTrainingConfig, train_tabular_phase_speed_policy  # noqa: E402
 
 
@@ -35,6 +40,12 @@ def main():
     parser.add_argument("--success-bonus", type=float, default=100.0)
     parser.add_argument("--speed-weight", type=float, default=0.01)
     parser.add_argument("--speed-power", type=float, default=2.0)
+    parser.add_argument(
+        "--speed-values",
+        type=comma_floats,
+        default=(1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0),
+    )
+    parser.add_argument("--frame-skip", type=int, default=10)
     add_base_policy_arguments(parser)
     add_observation_arguments(parser)
     parser.set_defaults(**defaults)

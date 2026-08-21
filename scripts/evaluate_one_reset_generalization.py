@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from one_reset_phase_schedule import run_phase_schedule  # noqa: E402
+from learned_phase_observation import LearnedPhaseEncoder  # noqa: E402
 
 
 def write_json(path: Path, value) -> None:
@@ -70,6 +71,7 @@ def main() -> int:
     args = parser.parse_args()
     contract = json.loads(args.contract.read_text())
     task = contract["tasks"][args.task]
+    detector = contract.get("phase_detector")
     if args.method == "vlm":
         selection = json.loads(Path(task["vlm_selection"]).read_text())
         schedule = selection["schedule"]
@@ -79,7 +81,14 @@ def main() -> int:
     seeds = [int(seed) for seed in task["evaluation_seeds"]]
     native = native_results(Path(task["native_ledger"]), seeds)
     candidate = [
-        run_phase_schedule(task["runtime_task"], schedule, seed)
+        run_phase_schedule(
+            task["runtime_task"],
+            schedule,
+            seed,
+            observation_encoder=(
+                None if detector is None else LearnedPhaseEncoder(**detector)
+            ),
+        )
         for seed in seeds
     ]
     result = {
@@ -90,6 +99,7 @@ def main() -> int:
         "learning_states": 1,
         "training_episode_budget": 50,
         "evaluation_states": 100,
+        "phase_observation": "oracle" if detector is None else "learned_rgb_proprio",
         **summarize(schedule, native, candidate),
     }
     write_json(args.output, result)

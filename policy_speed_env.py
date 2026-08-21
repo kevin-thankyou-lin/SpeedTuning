@@ -385,8 +385,29 @@ class SpeedPolicyEnv:
     def _save_video(self):
         try:
             import imageio.v2 as imageio
-        except ImportError as exc:
-            raise RuntimeError("Video export requires: uv sync --extra video") from exc
+        except ImportError:
+            # The pinned simulator environment intentionally stays minimal,
+            # but the host provides ffmpeg. Stream RGB frames directly rather
+            # than making media packaging a scientific-run dependency.
+            import subprocess
+
+            frames = np.asarray(self.image_list, dtype=np.uint8)
+            if frames.ndim != 4 or frames.shape[-1] != 3:
+                raise RuntimeError("Video frames must have shape [time, height, width, 3]")
+            height, width = frames.shape[1:3]
+            self.video_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-f", "rawvideo", "-pix_fmt", "rgb24",
+                    "-s:v", f"{width}x{height}", "-r", "50", "-i", "-",
+                    "-an", "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+                    str(self.video_path),
+                ],
+                input=frames.tobytes(),
+                check=True,
+            )
+            return
         self.video_path.parent.mkdir(parents=True, exist_ok=True)
         imageio.mimsave(self.video_path, self.image_list, fps=50)
 

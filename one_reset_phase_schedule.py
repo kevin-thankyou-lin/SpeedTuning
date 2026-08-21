@@ -1,4 +1,4 @@
-"""Oracle-phase schedules for fixed-scene learning and randomized evaluation."""
+"""Phase schedules for fixed-scene learning and randomized evaluation."""
 
 from __future__ import annotations
 
@@ -61,8 +61,12 @@ def sample_object_pose(task: str, seed: int) -> tuple[float, ...]:
     )
     try:
         env.reset()
+        # Some scenes include additional free-joint props after the task
+        # object. Only the controlled task objects belong in the frozen pose.
+        pose_values = TASK_OBJECTS[task] * 7
         return tuple(
-            float(value) for value in env.cur_ts.observation["env_state"]
+            float(value)
+            for value in env.cur_ts.observation["env_state"][:pose_values]
         )
     finally:
         env.close()
@@ -85,8 +89,9 @@ def run_phase_schedule(
     *,
     object_pose=None,
     video_path: Path | None = None,
+    observation_encoder=None,
 ) -> dict:
-    """Run one schedule, choosing only at reset and oracle phase entries."""
+    """Run one schedule, choosing at reset and supplied phase entries."""
 
     task = normalize_task_name(task)
     schedule = validate_schedule(schedule)
@@ -96,7 +101,11 @@ def run_phase_schedule(
         seed=int(seed),
         object_pose=object_pose,
         randomize_object_pose=object_pose is None,
-        observation_encoder=OraclePhaseEncoder(task),
+        observation_encoder=(
+            OraclePhaseEncoder(task)
+            if observation_encoder is None
+            else observation_encoder
+        ),
         decision_mode="phase_entry",
         decision_frame_skip=1,
         terminate_on_success=True,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Trusted file-queue runner for one-reset oracle-phase VLM search."""
+"""Trusted file-queue runner for one-reset phase-conditioned VLM search."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from one_reset_phase_schedule import (
     sample_object_pose,
     validate_schedule,
 )
+from learned_phase_observation import LearnedPhaseEncoder
 
 
 def canonical(value) -> bytes:
@@ -40,17 +41,21 @@ def write_json(path: Path, value) -> None:
 
 
 class OneResetServer:
-    def __init__(self, root: Path, task: str, training_seed: int, budget: int):
+    def __init__(self, root: Path, task: str, training_seed: int, budget: int, detector=None):
         self.root = root
         self.task = task
         self.training_seed = int(training_seed)
         self.budget = int(budget)
+        self.detector = detector
         self.state_path = root / "private" / "state.json"
         self.public_media = root / "public" / "media"
         if self.state_path.exists():
             self.state = json.loads(self.state_path.read_text())
         else:
             self.state = self._initialize()
+
+    def _phase_encoder(self):
+        return None if self.detector is None else LearnedPhaseEncoder(**self.detector)
 
     def _initialize(self) -> dict:
         object_pose = sample_object_pose(self.task, self.training_seed)
@@ -60,16 +65,22 @@ class OneResetServer:
             self.training_seed,
             object_pose=object_pose,
             video_path=self.public_media / "native.mp4",
+            observation_encoder=self._phase_encoder(),
         )
         native_hash = schedule_hash(native["schedule"])
         state = {
-            "schema": "one-reset-oracle-vlm-v1",
+            "schema": "one-reset-phase-vlm-v1",
             "task": self.task,
             "training_seed": self.training_seed,
             "object_pose": list(object_pose),
             "budget": self.budget,
             "results": {native_hash: native},
             "selected_schedule_hash": None,
+            "phase_observation": (
+                {"type": "oracle_phase_one_hot"}
+                if self.detector is None
+                else self._phase_encoder().spec()
+            ),
         }
         write_json(self.state_path, state)
         return state
@@ -105,6 +116,7 @@ class OneResetServer:
             "budget_remaining": self.budget - len(results),
             "results": results,
             "selected_schedule_hash": self.state["selected_schedule_hash"],
+            "phase_observation": self.state["phase_observation"],
         }
 
     def test(self, schedule) -> dict:
@@ -122,6 +134,7 @@ class OneResetServer:
             self.training_seed,
             object_pose=self.state["object_pose"],
             video_path=self.public_media / f"{identifier[:12]}.mp4",
+            observation_encoder=self._phase_encoder(),
         )
         self.state["results"][identifier] = result
         write_json(self.state_path, self.state)
@@ -156,13 +169,15 @@ def main() -> int:
     parser.add_argument("--task", choices=("pick_and_place", "tea_bag", "insertion"), required=True)
     parser.add_argument("--training-seed", type=int, required=True)
     parser.add_argument("--budget", type=int, default=50)
+    parser.add_argument("--detector-json", type=Path)
     args = parser.parse_args()
     api = args.root / "api"
     requests = api / "requests"
     responses = api / "responses"
     requests.mkdir(parents=True, exist_ok=True)
     responses.mkdir(parents=True, exist_ok=True)
-    server = OneResetServer(args.root, args.task, args.training_seed, args.budget)
+    detector = None if args.detector_json is None else json.loads(args.detector_json.read_text())
+    server = OneResetServer(args.root, args.task, args.training_seed, args.budget, detector)
     write_json(api / "READY.json", {"ready": True, "task": args.task})
     while True:
         for request_path in sorted(requests.glob("*.json")):

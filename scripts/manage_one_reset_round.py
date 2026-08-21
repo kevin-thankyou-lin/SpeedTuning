@@ -17,6 +17,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYTHON = Path(sys.executable)
 
+# All simulator jobs are headless. Child processes inherit these settings.
+os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+
 
 def log(message: str) -> None:
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", flush=True)
@@ -81,6 +85,10 @@ def main() -> int:
     args = parser.parse_args()
     root = args.root.resolve()
     contract = json.loads((root / "CONTRACT.json").read_text())
+    detector = contract.get("phase_detector")
+    detector_path = root / "DETECTOR.json"
+    if detector is not None:
+        write_json(detector_path, detector)
     source_validation = Path(contract["source_round"]) / "manager" / "VALIDATION.json"
     log(f"queued behind source validation: {source_validation}")
     while not source_validation.exists():
@@ -93,10 +101,15 @@ def main() -> int:
     try:
         for lane, task in contract["tasks"].items():
             runner_root = Path(task["vlm_runner_root"])
+            server_command = [
+                str(PYTHON), str(REPO_ROOT / "scripts" / "one_reset_server.py"),
+                "--root", str(runner_root), "--task", task["runtime_task"],
+                "--training-seed", str(task["training_seed"]), "--budget", "50",
+            ]
+            if detector is not None:
+                server_command += ["--detector-json", str(detector_path)]
             server = start_logged(
-                [str(PYTHON), str(REPO_ROOT / "scripts" / "one_reset_server.py"),
-                 "--root", str(runner_root), "--task", task["runtime_task"],
-                 "--training-seed", str(task["training_seed"]), "--budget", "50"],
+                server_command,
                 root / "logs" / f"{lane}-vlm-runner.log",
             )
             servers.append(server)
@@ -110,16 +123,25 @@ def main() -> int:
             private = json.loads((runner_root / "private" / "state.json").read_text())
             pose = json.dumps(private["object_pose"], separators=(",", ":"))
             config = REPO_ROOT / "configs" / task["config"]
-            tabular_process = start_logged(
-                [str(PYTHON), str(REPO_ROOT / "scripts" / "train_tabular_phase_speed.py"),
+            tabular_command = [
+                str(PYTHON), str(REPO_ROOT / "scripts" / "train_tabular_phase_speed.py"),
                  "--config", str(config), "--task", task["runtime_task"], "--episodes", "50",
                  "--seed", str(task["training_seed"]), "--output", task["tabular_checkpoint"],
                  "--report", task["tabular_report"], "--gamma", "0.97", "--epsilon-start", "1.0",
                  "--epsilon-end", "0.05", "--success-bonus", "100", "--speed-weight", "0.01",
                  "--speed-power", "2", "--speed-values", "1,1.5,2,2.5,3,3.5,4",
                  "--frame-skip", "1", "--base-policy", "scripted", "--speed-observation", "external",
-                 "--observation-encoder-loader", "oracle_phase_observation:create_oracle_phase_encoder",
-                 "--speed-decision-mode", "phase-entry", "--terminate-on-success", "--object-pose", pose],
+                 "--observation-encoder-loader", (
+                     "oracle_phase_observation:create_oracle_phase_encoder"
+                     if detector is None
+                     else "learned_phase_observation:create_learned_phase_encoder"
+                 ),
+                 "--speed-decision-mode", "phase-entry", "--terminate-on-success", "--object-pose", pose,
+            ]
+            if detector is not None:
+                tabular_command += ["--observation-factory-kwargs", json.dumps(detector)]
+            tabular_process = start_logged(
+                tabular_command,
                 root / "logs" / f"{lane}-tabular.log",
             )
             tabular.append(tabular_process)

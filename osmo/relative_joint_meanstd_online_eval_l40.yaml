@@ -1,0 +1,85 @@
+version: 2
+workflow:
+  name: speedtuning-conditioned-relative-joint-meanstd-online-eval-20260822-v1
+  timeout:
+    exec_timeout: 24h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 8
+      gpu: 1
+      memory: 32Gi
+      platform: ovx-l40
+      storage: 32Gi
+  groups:
+    - name: monitor
+      tasks:
+        - name: pick
+          lead: true
+          image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: pick
+            RUNTIME_TASK: pick_and_place
+            MONITOR_SEED_BASE: "8100000"
+          files: &run_file
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=ae3c292f9d024fe84a48af4bd5708f7a377dc724
+                TRAINING_EXPERIMENT=speedtuning-conditioned-relative-joint-meanstd-20260822-v1
+                MONITOR_EXPERIMENT=speedtuning-conditioned-relative-joint-meanstd-online-eval-20260822-v1
+                TRAINING_ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/$TRAINING_EXPERIMENT/$TASK
+                MONITOR_ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/$MONITOR_EXPERIMENT/$TASK
+                OUTPUT=/osmo/run/outputs/$TASK
+                CODE=/osmo/run/workspace/SpeedTuning-meanstd-monitor-$TASK
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+                for _ in $(seq 1 720); do
+                  test ! -d "$TRAINING_ROOT" || break
+                  sleep 10
+                done
+                test -d "$TRAINING_ROOT"
+                test ! -e "$MONITOR_ROOT" || { echo "refusing to overwrite $MONITOR_ROOT" >&2; exit 30; }
+                mkdir -p "$MONITOR_ROOT" "$OUTPUT"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m scripts.monitor_relative_training \
+                  --task "$RUNTIME_TASK" --training-root "$TRAINING_ROOT" \
+                  --output-root "$MONITOR_ROOT" --seed-base "$MONITOR_SEED_BASE" \
+                  --episodes 10 --poll-seconds 20 \
+                  2>&1 | tee "$MONITOR_ROOT/monitor.log"
+                test -s "$MONITOR_ROOT/progress.json"
+                cp "$MONITOR_ROOT/progress.json" "$OUTPUT"/
+                echo "MEANSTD_ONLINE_EVAL_COMPLETE task=$TASK root=$MONITOR_ROOT"
+        - name: tea
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: tea
+            RUNTIME_TASK: tea_bag
+            MONITOR_SEED_BASE: "8200000"
+          files: *run_file
+        - name: insertion
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: insertion
+            RUNTIME_TASK: insertion
+            MONITOR_SEED_BASE: "8300000"
+          files: *run_file

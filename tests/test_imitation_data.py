@@ -2,8 +2,10 @@ import numpy as np
 import h5py
 
 from imitation_data import (
+    denormalize_delta,
     decode_relative_chunk,
     fit_normalization,
+    normalize_delta,
     relative_chunk,
     robust_denormalize,
     robust_normalize,
@@ -38,6 +40,27 @@ def test_normalization_is_per_chunk_step_and_joint(tmp_path):
     assert stats["delta_q99"].shape == (3, 14)
     assert stats["delta_low"].shape == (3, 14)
     assert np.all(stats["delta_high"] - stats["delta_low"] >= 1e-3 - 1e-7)
+
+
+def test_mean_std_normalization_is_unclipped_and_round_trips(tmp_path):
+    paths = []
+    for episode, scale in enumerate((1.0, 2.0)):
+        path = tmp_path / f"episode_{episode}.hdf5"
+        qpos = np.stack((np.zeros(14), np.ones(14), np.full(14, 2))) * scale
+        target = qpos + np.arange(1, 4)[:, None]
+        with h5py.File(path, "w") as root:
+            root.attrs["speed_condition"] = 0
+            root.create_group("observations").create_dataset("qpos", data=qpos)
+            root.create_dataset("target_qpos", data=target)
+        paths.append(path)
+    stats = fit_normalization(paths, chunk_size=3, method="mean_std")
+    assert stats["normalization_method"] == "mean_std"
+    assert stats["qpos_mean"].shape == (14,)
+    assert stats["delta_mean"].shape == (3, 14)
+    value = stats["delta_mean"] + 5 * stats["delta_std"]
+    normalized = normalize_delta(value, stats)
+    assert float(normalized.max()) >= 4.99
+    np.testing.assert_allclose(denormalize_delta(normalized, stats), value)
 
 
 def test_q01_q99_scaling_clips_and_round_trips_inside_bounds():

@@ -14,10 +14,12 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 
 from imitation_data import (
+    denormalize_delta,
     fit_normalization,
+    normalization_method,
     normalization_clipping_report,
-    robust_denormalize,
-    robust_normalize,
+    normalize_delta,
+    normalize_qpos,
     save_normalization,
 )
 
@@ -31,10 +33,7 @@ class RelativeJointDataset(Dataset):
         self.episode_start_probability = float(episode_start_probability)
         if not 0.0 <= self.episode_start_probability <= 1.0:
             raise ValueError("episode_start_probability must be in [0, 1]")
-        self.qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
-        self.qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
-        self.delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
-        self.delta_high = np.asarray(stats["delta_high"], dtype=np.float32)
+        self.stats = stats
 
     def __len__(self):
         return len(self.paths)
@@ -57,10 +56,10 @@ class RelativeJointDataset(Dataset):
         padded = np.repeat(targets[-1:], self.chunk_size, axis=0)
         padded[:valid] = targets
         delta = padded - first_qpos[None]
-        delta = robust_normalize(delta, self.delta_low, self.delta_high)
+        delta = normalize_delta(delta, self.stats)
         is_pad = np.arange(self.chunk_size) >= valid
         conditioned_qpos = np.concatenate(
-            (robust_normalize(first_qpos, self.qpos_low, self.qpos_high), [speed_condition])
+            (normalize_qpos(first_qpos, self.stats), [speed_condition])
         ).astype(np.float32)
         return (
             torch.from_numpy(image.transpose(2, 0, 1)[None]).float() / 255.0,
@@ -103,9 +102,10 @@ def prepare_datasets(
     chunk_size,
     split_seed=0,
     episode_start_probability=0.0,
+    normalization="q01_q99",
 ):
     train_paths, validation_paths = split_episodes(dataset_dir, seed=split_seed)
-    stats = fit_normalization(train_paths, chunk_size)
+    stats = fit_normalization(train_paths, chunk_size, normalization)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     save_normalization(stats, output_dir / "normalization.npz")
@@ -269,10 +269,8 @@ class RelativeChunkPredictor:
         self.model.load_state_dict(payload["model_state_dict"])
         self.model.eval()
         stats = payload["stats"]
-        self.qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
-        self.qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
-        self.delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
-        self.delta_high = np.asarray(stats["delta_high"], dtype=np.float32)
+        self.stats = stats
+        self.normalization_method = normalization_method(stats)
         self._clip_counts = {
             "qpos_below": 0,
             "qpos_above": 0,
@@ -295,16 +293,26 @@ class RelativeChunkPredictor:
         if speed_condition is not None:
             self.set_speed_condition(speed_condition)
         first_qpos = np.asarray(observation["qpos"], dtype=np.float32)
-        self._clip_counts["qpos_below"] += int(
-            np.count_nonzero(first_qpos < self.qpos_low)
-        )
-        self._clip_counts["qpos_above"] += int(
-            np.count_nonzero(first_qpos > self.qpos_high)
-        )
+        normalized_first_qpos = normalize_qpos(first_qpos, self.stats)
+        threshold = 1.0 if self.normalization_method == "q01_q99" else 3.0
+        if self.normalization_method == "q01_q99":
+            self._clip_counts["qpos_below"] += int(
+                np.count_nonzero(first_qpos < self.stats["qpos_low"])
+            )
+            self._clip_counts["qpos_above"] += int(
+                np.count_nonzero(first_qpos > self.stats["qpos_high"])
+            )
+        else:
+            self._clip_counts["qpos_below"] += int(
+                np.count_nonzero(normalized_first_qpos < -threshold)
+            )
+            self._clip_counts["qpos_above"] += int(
+                np.count_nonzero(normalized_first_qpos > threshold)
+            )
         self._clip_counts["qpos_elements"] += int(first_qpos.size)
         normalized_qpos = np.concatenate(
             (
-                robust_normalize(first_qpos, self.qpos_low, self.qpos_high),
+                normalized_first_qpos,
                 [self.speed_condition],
             )
         ).astype(np.float32)
@@ -318,15 +326,13 @@ class RelativeChunkPredictor:
                 qpos.to(self.device), image.to(self.device) / 255.0
             )[0].cpu().numpy()
         self._clip_counts["delta_below"] += int(
-            np.count_nonzero(normalized_delta < -1.0)
+            np.count_nonzero(normalized_delta < -threshold)
         )
         self._clip_counts["delta_above"] += int(
-            np.count_nonzero(normalized_delta > 1.0)
+            np.count_nonzero(normalized_delta > threshold)
         )
         self._clip_counts["delta_elements"] += int(normalized_delta.size)
-        delta = robust_denormalize(
-            normalized_delta, self.delta_low, self.delta_high
-        )
+        delta = denormalize_delta(normalized_delta, self.stats)
         return first_qpos[None] + delta
 
     def clipping_metrics(self):
@@ -335,16 +341,27 @@ class RelativeChunkPredictor:
             above = self._clip_counts[f"{prefix}_above"]
             total = self._clip_counts[f"{prefix}_elements"]
             denominator = max(total, 1)
+            outside = (below + above) / denominator
             return {
                 "elements": total,
                 "below": below,
                 "above": above,
                 "below_fraction": below / denominator,
                 "above_fraction": above / denominator,
-                "clipped_fraction": (below + above) / denominator,
+                "outside_reference_fraction": outside,
+                "clipping_applied": self.normalization_method == "q01_q99",
+                "clipped_fraction": (
+                    outside if self.normalization_method == "q01_q99" else 0.0
+                ),
             }
 
         return {
+            "normalization_method": self.normalization_method,
+            "reference_range": (
+                "q01_q99"
+                if self.normalization_method == "q01_q99"
+                else "mean +/- 3 std"
+            ),
             "qpos_input": summarize("qpos"),
             "delta_output": summarize("delta"),
         }

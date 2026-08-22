@@ -380,8 +380,49 @@ def robust_denormalize(value, low, high):
     return low + (value + 1) * 0.5 * (high - low)
 
 
-def fit_normalization(episode_paths, chunk_size):
-    """Fit train-only q01/q99 qpos and per-chunk-step delta bounds."""
+def standard_normalize(value, mean, std):
+    """Apply unclipped train-only z-score normalization."""
+
+    return (
+        np.asarray(value, dtype=np.float32) - np.asarray(mean, dtype=np.float32)
+    ) / np.asarray(std, dtype=np.float32)
+
+
+def standard_denormalize(value, mean, std):
+    """Restore physical units from an unclipped z-score."""
+
+    return np.asarray(value, dtype=np.float32) * np.asarray(
+        std, dtype=np.float32
+    ) + np.asarray(mean, dtype=np.float32)
+
+
+def normalization_method(stats):
+    value = stats.get("normalization_method", "q01_q99")
+    if isinstance(value, np.ndarray) and value.ndim == 0:
+        value = value.item()
+    return str(value)
+
+
+def normalize_qpos(value, stats):
+    if normalization_method(stats) == "mean_std":
+        return standard_normalize(value, stats["qpos_mean"], stats["qpos_std"])
+    return robust_normalize(value, stats["qpos_low"], stats["qpos_high"])
+
+
+def normalize_delta(value, stats):
+    if normalization_method(stats) == "mean_std":
+        return standard_normalize(value, stats["delta_mean"], stats["delta_std"])
+    return robust_normalize(value, stats["delta_low"], stats["delta_high"])
+
+
+def denormalize_delta(value, stats):
+    if normalization_method(stats) == "mean_std":
+        return standard_denormalize(value, stats["delta_mean"], stats["delta_std"])
+    return robust_denormalize(value, stats["delta_low"], stats["delta_high"])
+
+
+def fit_normalization(episode_paths, chunk_size, method="q01_q99"):
+    """Fit train-only qpos and per-chunk-step relative-action statistics."""
 
     import h5py
 
@@ -396,7 +437,26 @@ def fit_normalization(episode_paths, chunk_size):
             end = min(start + chunk_size, len(targets))
             for offset, delta in enumerate(targets[start:end] - anchor[None]):
                 delta_values[offset].append(delta)
+    if method not in ("q01_q99", "mean_std"):
+        raise ValueError("normalization method must be q01_q99 or mean_std")
     qpos = np.concatenate(qpos_values)
+    if method == "mean_std":
+        delta_mean, delta_std = [], []
+        for values in delta_values:
+            array = np.asarray(values, dtype=np.float32)
+            delta_mean.append(array.mean(axis=0))
+            delta_std.append(np.maximum(array.std(axis=0), 1e-3))
+        return {
+            "qpos_mean": qpos.mean(axis=0).astype(np.float32),
+            "qpos_std": np.maximum(qpos.std(axis=0), 1e-3).astype(np.float32),
+            "delta_mean": np.asarray(delta_mean, dtype=np.float32),
+            "delta_std": np.asarray(delta_std, dtype=np.float32),
+            "chunk_size": int(chunk_size),
+            "normalization_method": "mean_std",
+            "normalization": "train-only mean/std z-score; no clipping",
+            "minimum_std": 1e-3,
+            "relative_action": "target_qpos[t+k] - observations/qpos[t]",
+        }
     qpos_q01, qpos_q99, qpos_low, qpos_high = _quantile_bounds(qpos, axis=0)
     delta_q01, delta_q99, delta_low, delta_high = [], [], [], []
     for values in delta_values:
@@ -416,6 +476,7 @@ def fit_normalization(episode_paths, chunk_size):
         "delta_low": np.asarray(delta_low),
         "delta_high": np.asarray(delta_high),
         "chunk_size": int(chunk_size),
+        "normalization_method": "q01_q99",
         "normalization": "train-only q01/q99 clipped linear scaling to [-1,1]",
         "minimum_span": 1e-3,
         "relative_action": "target_qpos[t+k] - observations/qpos[t]",
@@ -423,16 +484,31 @@ def fit_normalization(episode_paths, chunk_size):
 
 
 def normalization_clipping_report(episode_paths, stats, chunk_size):
-    """Measure how often a split falls outside train-fitted robust bounds."""
+    """Measure split outliers and whether the selected transform clips them."""
 
     import h5py
 
     qpos_below = qpos_above = qpos_total = 0
     delta_below = delta_above = delta_total = 0
-    qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
-    qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
-    delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
-    delta_high = np.asarray(stats["delta_high"], dtype=np.float32)
+    method = normalization_method(stats)
+    if method == "mean_std":
+        qpos_low = np.asarray(stats["qpos_mean"], dtype=np.float32) - 3 * np.asarray(
+            stats["qpos_std"], dtype=np.float32
+        )
+        qpos_high = np.asarray(stats["qpos_mean"], dtype=np.float32) + 3 * np.asarray(
+            stats["qpos_std"], dtype=np.float32
+        )
+        delta_low = np.asarray(stats["delta_mean"], dtype=np.float32) - 3 * np.asarray(
+            stats["delta_std"], dtype=np.float32
+        )
+        delta_high = np.asarray(stats["delta_mean"], dtype=np.float32) + 3 * np.asarray(
+            stats["delta_std"], dtype=np.float32
+        )
+    else:
+        qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
+        qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
+        delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
+        delta_high = np.asarray(stats["delta_high"], dtype=np.float32)
     for path in map(Path, episode_paths):
         with h5py.File(path, "r") as root:
             qpos = np.asarray(root["observations/qpos"], dtype=np.float32)
@@ -451,16 +527,21 @@ def normalization_clipping_report(episode_paths, stats, chunk_size):
 
     def rates(below, above, total):
         denominator = max(int(total), 1)
+        outside = (below + above) / denominator
         return {
             "elements": int(total),
             "below": int(below),
             "above": int(above),
             "below_fraction": below / denominator,
             "above_fraction": above / denominator,
-            "clipped_fraction": (below + above) / denominator,
+            "outside_reference_fraction": outside,
+            "clipping_applied": method == "q01_q99",
+            "clipped_fraction": outside if method == "q01_q99" else 0.0,
         }
 
     return {
+        "normalization_method": method,
+        "reference_range": "q01_q99" if method == "q01_q99" else "mean +/- 3 std",
         "qpos": rates(qpos_below, qpos_above, qpos_total),
         "delta": rates(delta_below, delta_above, delta_total),
     }

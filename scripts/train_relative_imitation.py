@@ -39,6 +39,9 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--episode-start-probability", type=float, default=0.0)
+    parser.add_argument(
+        "--normalization", choices=("q01_q99", "mean_std"), default="q01_q99"
+    )
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--checkpoint-every", type=int, default=0)
     args = parser.parse_args()
@@ -52,6 +55,7 @@ def main():
         args.chunk_size,
         args.seed,
         args.episode_start_probability,
+        args.normalization,
     )
     train_loader = DataLoader(
         train, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True
@@ -96,6 +100,7 @@ def main():
                 "validation_loss": value,
                 "training": {
                     "episode_start_probability": args.episode_start_probability,
+                    "normalization": args.normalization,
                     "initial_checkpoint": (
                         str(args.initial_checkpoint)
                         if args.initial_checkpoint is not None
@@ -115,6 +120,7 @@ def main():
                 "steps": args.steps,
                 "best_validation_loss": best,
                 "episode_start_probability": args.episode_start_probability,
+                "normalization": args.normalization,
                 "initial_checkpoint": (
                     str(args.initial_checkpoint)
                     if args.initial_checkpoint is not None

@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import torchvision.transforms as transforms
@@ -19,6 +20,9 @@ class ACTPolicy(nn.Module):
         self.model = model # CVAE decoder
         self.optimizer = optimizer
         self.kl_weight = args_override['kl_weight']
+        self.deterministic_training = bool(
+            args_override.get('deterministic_training', False)
+        )
 
     def __call__(self, qpos, image, actions=None, is_pad=None):
         env_state = None
@@ -28,13 +32,18 @@ class ACTPolicy(nn.Module):
         if actions is not None: # training time
             actions = actions[:, :self.model.num_queries]
             is_pad = is_pad[:, :self.model.num_queries]
-
-            a_hat, is_pad_hat, (mu, logvar) = self.model(qpos, image, env_state, actions, is_pad)
-            total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
             loss_dict = dict()
+            if self.deterministic_training:
+                a_hat, _, _ = self.model(qpos, image, env_state)
+                loss_dict['kl'] = torch.zeros((), device=a_hat.device)
+            else:
+                a_hat, _, (mu, logvar) = self.model(
+                    qpos, image, env_state, actions, is_pad
+                )
+                total_kld, _, _ = kl_divergence(mu, logvar)
+                loss_dict['kl'] = total_kld[0]
             l1 = masked_l1_loss(actions, a_hat, is_pad)
             loss_dict['l1'] = l1
-            loss_dict['kl'] = total_kld[0]
             loss_dict['loss'] = loss_dict['l1'] + loss_dict['kl'] * self.kl_weight
             return loss_dict
         else: # inference time

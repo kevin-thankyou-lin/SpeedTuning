@@ -56,6 +56,11 @@ def main():
         type=int,
         help="Only charge action loss through this executed prefix of each chunk.",
     )
+    parser.add_argument(
+        "--act-deterministic",
+        action="store_true",
+        help="Train ACT with the same zero latent used for inference.",
+    )
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--checkpoint-every", type=int, default=0)
     args = parser.parse_args()
@@ -78,7 +83,9 @@ def main():
     validation_loader = DataLoader(
         validation, batch_size=args.batch_size, shuffle=False, num_workers=1
     )
-    model, config = create_policy(args.kind, args.chunk_size, device, args.lr)
+    model, config = create_policy(
+        args.kind, args.chunk_size, device, args.lr, args.act_deterministic
+    )
     if args.initial_checkpoint is not None:
         initial = torch.load(
             args.initial_checkpoint, map_location=device, weights_only=False
@@ -119,6 +126,7 @@ def main():
                     "supervised_horizon": (
                         args.supervised_horizon or args.chunk_size
                     ),
+                    "act_deterministic": args.act_deterministic,
                     "initial_checkpoint": (
                         str(args.initial_checkpoint)
                         if args.initial_checkpoint is not None
@@ -140,6 +148,7 @@ def main():
                 "episode_start_probability": args.episode_start_probability,
                 "normalization": args.normalization,
                 "supervised_horizon": args.supervised_horizon or args.chunk_size,
+                "act_deterministic": args.act_deterministic,
                 "initial_checkpoint": (
                     str(args.initial_checkpoint)
                     if args.initial_checkpoint is not None

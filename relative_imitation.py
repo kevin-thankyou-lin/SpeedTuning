@@ -251,7 +251,9 @@ class DiffusionJointPolicy(nn.Module):
         return self.optimizer
 
 
-def create_policy(kind, chunk_size, device, lr=1e-4):
+def create_policy(
+    kind, chunk_size, device, lr=1e-4, act_deterministic=False
+):
     config = {
         "camera_names": ["angle"],
         "num_queries": int(chunk_size),
@@ -268,6 +270,7 @@ def create_policy(kind, chunk_size, device, lr=1e-4):
         "device": str(device),
         "qpos_dim": 15,
         "action_dim": 14,
+        "deterministic_training": bool(act_deterministic),
     }
     if kind == "act":
         from policy import ACTPolicy
@@ -288,7 +291,11 @@ class RelativeChunkPredictor:
         payload = torch.load(checkpoint, map_location=self.device, weights_only=False)
         config = payload["policy_config"]
         self.model, _ = create_policy(
-            payload["kind"], config["num_queries"], self.device, config["lr"]
+            payload["kind"],
+            config["num_queries"],
+            self.device,
+            config["lr"],
+            config.get("deterministic_training", False),
         )
         self.model.load_state_dict(payload["model_state_dict"])
         self.model.eval()

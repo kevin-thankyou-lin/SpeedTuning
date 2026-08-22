@@ -65,8 +65,17 @@ def test_actual_act_model_accepts_every_simulator_observation():
         "camera_names": ["top"],
         "pretrained_backbone": False,
         "device": "cpu",
+        "deterministic_training": True,
     }
     policy = ACTPolicy(config).eval()
+    loss = policy(
+        torch.zeros((1, 14)),
+        torch.zeros((1, 1, 3, 64, 64)),
+        torch.zeros((1, 4, 14)),
+        torch.zeros((1, 4), dtype=torch.bool),
+    )
+    assert loss["kl"].item() == 0
+    assert torch.isfinite(loss["loss"])
     for task_name in TASK_SPECS:
         env = make_sim_env(task_name, render_images=True, seed=0)
         timestep = env.reset()

@@ -30,7 +30,7 @@ workflow:
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=4c52bff679c883fd809d76f2856fd975f7a42fbf
+                SOURCE_COMMIT=6ae8b3477758f7d0033658c8d5cbb896c5c1c979
                 EXPERIMENT=speedtuning-conditioned-relative-joint-20260821-v2
                 PERSIST_ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/$EXPERIMENT
                 RUN=$PERSIST_ROOT/$TASK
@@ -103,7 +103,11 @@ workflow:
                     },
                     "condition": "append 0=uniform native 1x or 1=any non-native schedule to normalized 14D qpos; action remains 14D",
                     "relative_action": "target_qpos[t+k] - observations/qpos[t]",
-                    "normalization": "train-only per chunk step and joint",
+                    "normalization": "train-only pooled q01/q99 clipping to [-1,1]; qpos per joint and delta per chunk offset per joint; 1e-3 minimum span",
+                    "normalization_audits": {
+                        str(path.parent.relative_to(run / "checkpoints")): json.loads(path.read_text())
+                        for path in sorted(run.glob("checkpoints/*/*/normalization_audit.json"))
+                    },
                     "evaluations": {
                         path.stem.removeprefix("eval-"): json.loads(path.read_text())
                         for path in sorted(run.glob("eval-*.json"))

@@ -1,6 +1,6 @@
 version: 2
 workflow:
-  name: speedtuning-pick-executed-prefix-debug-20260822-v1
+  name: speedtuning-pick-executed-prefix-debug-20260822-v2
   timeout:
     exec_timeout: 10h
     queue_timeout: 2h
@@ -15,7 +15,6 @@ workflow:
     - name: comparison
       tasks:
         - name: finetune-q01-prefix8
-          lead: true
           image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
           command: [bash]
           args: [/tmp/run.sh]
@@ -31,7 +30,8 @@ workflow:
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=755030f34f4adeaed05b10418d87bcb1df407e67
+                SOURCE_COMMIT=3deb07747736edf2860c99f2e340c0b52ed46eea
+                PREFIX_GENERATION=speedtuning-pick-executed-prefix-20260822-v2
                 CODE=/osmo/run/workspace/SpeedTuning-$VARIANT
                 export MUJOCO_GL=egl
                 export MPLBACKEND=Agg
@@ -47,10 +47,11 @@ workflow:
                 uv python install 3.10
                 uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
                 PYTHON=$CODE/.venv/bin/python
-                export SOURCE_COMMIT PYTHON
+                export SOURCE_COMMIT PYTHON PREFIX_GENERATION
                 "$PYTHON" -m pytest -q tests/test_imitation_data.py tests/test_chunked_policies.py tests/test_training_monitor.py
                 bash scripts/run_pick_prefix_debug.sh
         - name: scratch-q01-prefix8
+          lead: true
           image: *image
           command: [bash]
           args: [/tmp/run.sh]

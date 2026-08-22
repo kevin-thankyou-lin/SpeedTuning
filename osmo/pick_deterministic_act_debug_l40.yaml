@@ -1,0 +1,55 @@
+version: 2
+workflow:
+  name: speedtuning-pick-deterministic-act-debug-20260822-v1
+  timeout:
+    exec_timeout: 8h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 48Gi
+  groups:
+    - name: debug
+      tasks:
+        - name: finetune-q01-prefix8-deterministic
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            VARIANT: finetune-q01-prefix8-deterministic
+            NORMALIZATION: q01_q99
+            STEPS: "10000"
+            CHECKPOINT_EVERY: "1000"
+            LEARNING_RATE: "5e-5"
+            INITIALIZE_FROM_BASE: "1"
+            ACT_DETERMINISTIC: "1"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=ccb86502bb645f2930a8b1018b1db320468ffe24
+                PREFIX_GENERATION=speedtuning-pick-deterministic-act-20260822-v1
+                SUPERVISED_HORIZON=8
+                CODE=/osmo/run/workspace/SpeedTuning-$VARIANT
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                export SOURCE_COMMIT PYTHON PREFIX_GENERATION SUPERVISED_HORIZON
+                "$PYTHON" -m pytest -q tests/test_policy_loss.py tests/test_imitation_data.py tests/test_chunked_policies.py tests/test_training_monitor.py
+                bash scripts/run_pick_prefix_debug.sh

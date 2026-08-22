@@ -1,0 +1,86 @@
+version: 2
+workflow:
+  name: speedtuning-conditioned-relative-joint-meanstd-insertion-online-eval-recovery-20260822-v1
+  timeout:
+    exec_timeout: 4h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 8
+      gpu: 1
+      memory: 32Gi
+      platform: ovx-l40
+      storage: 32Gi
+  groups:
+    - name: recovery
+      tasks:
+        - name: insertion
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=3ccde06b16629f66ade9d96487945577914f1b58
+                TRAINING_ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-meanstd-20260822-v1/insertion
+                MONITOR_ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-meanstd-online-eval-20260822-v1/insertion
+                RECEIPT=$MONITOR_ROOT/insertion-online-eval-recovery-v1-receipt.json
+                OUTPUT=/osmo/run/outputs/insertion
+                CODE=/osmo/run/workspace/SpeedTuning-meanstd-insertion-monitor-recovery
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+
+                test -s "$TRAINING_ROOT/checkpoints/mixed_100slow_50fast/diffusion/training_complete.json"
+                test -s "$MONITOR_ROOT/progress.json"
+                test ! -e "$RECEIPT"
+                mkdir -p "$OUTPUT"
+                export RECEIPT SOURCE_COMMIT
+                python - <<'PY'
+                import json
+                import os
+                from pathlib import Path
+
+                Path(os.environ["RECEIPT"]).write_text(json.dumps({
+                    "schema": "conditioned-relative-joint-insertion-online-eval-recovery-v1",
+                    "source_workflow": "speedtuning-conditioned-relative-joint-meanstd-online-eval-20260822-v1-1",
+                    "reason": "source monitor exited after the 15k threshold without a final checkpoint receipt",
+                    "recovery_source_commit": os.environ["SOURCE_COMMIT"],
+                    "seed_base": 8300000,
+                    "episodes_per_checkpoint_and_mode": 10,
+                }, indent=2) + "\n")
+                PY
+
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m scripts.monitor_relative_training \
+                  --task insertion --training-root "$TRAINING_ROOT" \
+                  --output-root "$MONITOR_ROOT" --seed-base 8300000 \
+                  --episodes 10 --poll-seconds 20 \
+                  2>&1 | tee -a "$MONITOR_ROOT/monitor.log"
+                "$PYTHON" - <<'PY'
+                import json
+                from pathlib import Path
+
+                root = Path("/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-meanstd-online-eval-20260822-v1/insertion")
+                progress = json.loads((root / "progress.json").read_text())
+                model = progress["models"]["mixed_100slow_50fast/diffusion"]
+                assert progress.get("terminal") is True
+                assert set(model["threshold_crossings"]) == {"5000", "10000", "15000", "20000"}
+                assert model["final_best_step"] is not None
+                PY
+                cp "$MONITOR_ROOT/progress.json" "$RECEIPT" "$OUTPUT"/
+                echo "MEANSTD_INSERTION_ONLINE_EVAL_RECOVERY_COMPLETE root=$MONITOR_ROOT"

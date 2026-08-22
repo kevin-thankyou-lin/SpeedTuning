@@ -23,9 +23,14 @@ from imitation_data import (
 
 
 class RelativeJointDataset(Dataset):
-    def __init__(self, paths, stats, chunk_size):
+    def __init__(
+        self, paths, stats, chunk_size, episode_start_probability=0.0
+    ):
         self.paths = tuple(map(Path, paths))
         self.chunk_size = int(chunk_size)
+        self.episode_start_probability = float(episode_start_probability)
+        if not 0.0 <= self.episode_start_probability <= 1.0:
+            raise ValueError("episode_start_probability must be in [0, 1]")
         self.qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
         self.qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
         self.delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
@@ -37,7 +42,11 @@ class RelativeJointDataset(Dataset):
     def __getitem__(self, index):
         with h5py.File(self.paths[index], "r") as root:
             length = len(root["target_qpos"])
-            start = random.randrange(length)
+            start = (
+                0
+                if random.random() < self.episode_start_probability
+                else random.randrange(length)
+            )
             first_qpos = np.asarray(root["observations/qpos"][start], dtype=np.float32)
             image = np.asarray(root["observations/images/angle"][start], dtype=np.uint8)
             targets = np.asarray(
@@ -88,7 +97,13 @@ def split_episodes(dataset_dir, validation_fraction=0.1, seed=0):
     return train, validation
 
 
-def prepare_datasets(dataset_dir, output_dir, chunk_size, split_seed=0):
+def prepare_datasets(
+    dataset_dir,
+    output_dir,
+    chunk_size,
+    split_seed=0,
+    episode_start_probability=0.0,
+):
     train_paths, validation_paths = split_episodes(dataset_dir, seed=split_seed)
     stats = fit_normalization(train_paths, chunk_size)
     output_dir = Path(output_dir)
@@ -122,14 +137,19 @@ def prepare_datasets(dataset_dir, output_dir, chunk_size, split_seed=0):
                 "normalization_audit": str(output_dir / "normalization_audit.json"),
                 "train_condition_counts": condition_counts(train_paths),
                 "validation_condition_counts": condition_counts(validation_paths),
+                "episode_start_probability": float(episode_start_probability),
             },
             indent=2,
         )
         + "\n"
     )
     return (
-        RelativeJointDataset(train_paths, stats, chunk_size),
-        RelativeJointDataset(validation_paths, stats, chunk_size),
+        RelativeJointDataset(
+            train_paths, stats, chunk_size, episode_start_probability
+        ),
+        RelativeJointDataset(
+            validation_paths, stats, chunk_size, episode_start_probability
+        ),
         stats,
     )
 

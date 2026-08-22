@@ -38,13 +38,20 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--episode-start-probability", type=float, default=0.0)
+    parser.add_argument("--initial-checkpoint", type=Path)
+    parser.add_argument("--checkpoint-every", type=int, default=0)
     args = parser.parse_args()
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     train, validation, stats = prepare_datasets(
-        args.dataset_dir, args.output_dir, args.chunk_size, args.seed
+        args.dataset_dir,
+        args.output_dir,
+        args.chunk_size,
+        args.seed,
+        args.episode_start_probability,
     )
     train_loader = DataLoader(
         train, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True
@@ -53,6 +60,15 @@ def main():
         validation, batch_size=args.batch_size, shuffle=False, num_workers=1
     )
     model, config = create_policy(args.kind, args.chunk_size, device, args.lr)
+    if args.initial_checkpoint is not None:
+        initial = torch.load(
+            args.initial_checkpoint, map_location=device, weights_only=False
+        )
+        if initial["kind"] != args.kind:
+            raise ValueError("initial checkpoint policy kind does not match")
+        if int(initial["policy_config"]["num_queries"]) != args.chunk_size:
+            raise ValueError("initial checkpoint chunk size does not match")
+        model.load_state_dict(initial["model_state_dict"])
     optimizer = model.configure_optimizers()
     iterator = iter(train_loader)
     best = float("inf")
@@ -71,21 +87,43 @@ def main():
         if step % 500 == 0 or step == args.steps:
             value = _mean_loss(model, validation_loader, device)
             print(json.dumps({"step": step, "train_loss": float(loss), "validation_loss": value}), flush=True)
+            payload = {
+                "model_state_dict": model.state_dict(),
+                "kind": args.kind,
+                "policy_config": config,
+                "stats": {key: np.asarray(item) for key, item in stats.items()},
+                "step": step,
+                "validation_loss": value,
+                "training": {
+                    "episode_start_probability": args.episode_start_probability,
+                    "initial_checkpoint": (
+                        str(args.initial_checkpoint)
+                        if args.initial_checkpoint is not None
+                        else None
+                    ),
+                },
+            }
+            if args.checkpoint_every and step % args.checkpoint_every == 0:
+                torch.save(payload, args.output_dir / f"step-{step:05d}.pt")
             if value < best:
                 best = value
-                torch.save(
-                    {
-                        "model_state_dict": model.state_dict(),
-                        "kind": args.kind,
-                        "policy_config": config,
-                        "stats": {key: np.asarray(item) for key, item in stats.items()},
-                        "step": step,
-                        "validation_loss": value,
-                    },
-                    args.output_dir / "best.pt",
-                )
+                torch.save(payload, args.output_dir / "best.pt")
     (args.output_dir / "training_complete.json").write_text(
-        json.dumps({"kind": args.kind, "steps": args.steps, "best_validation_loss": best}, indent=2) + "\n"
+        json.dumps(
+            {
+                "kind": args.kind,
+                "steps": args.steps,
+                "best_validation_loss": best,
+                "episode_start_probability": args.episode_start_probability,
+                "initial_checkpoint": (
+                    str(args.initial_checkpoint)
+                    if args.initial_checkpoint is not None
+                    else None
+                ),
+            },
+            indent=2,
+        )
+        + "\n"
     )
 
 

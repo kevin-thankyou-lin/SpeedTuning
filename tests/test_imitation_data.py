@@ -82,6 +82,43 @@ def test_dataset_appends_raw_condition_without_changing_action_dim(tmp_path):
     assert action.shape == (2, 14)
 
 
+def test_dataset_can_oversample_the_episode_start(tmp_path):
+    path = tmp_path / "episode_0000.hdf5"
+    qpos = np.stack((np.zeros(14), np.ones(14)), dtype=np.float32)
+    target = qpos + 0.25
+    image = np.stack(
+        (
+            np.zeros((8, 8, 3), dtype=np.uint8),
+            np.full((8, 8, 3), 255, dtype=np.uint8),
+        )
+    )
+    with h5py.File(path, "w") as root:
+        root.attrs["speed_condition"] = 0
+        observations = root.create_group("observations")
+        observations.create_dataset("qpos", data=qpos)
+        observations.create_group("images").create_dataset("angle", data=image)
+        root.create_dataset("target_qpos", data=target)
+    stats = {
+        "qpos_low": np.full(14, -1.0),
+        "qpos_high": np.full(14, 1.0),
+        "delta_low": np.full((2, 14), -1.0),
+        "delta_high": np.full((2, 14), 1.0),
+    }
+    dataset = RelativeJointDataset(
+        [path], stats, chunk_size=2, episode_start_probability=1.0
+    )
+
+    image_tensor, conditioned_qpos, _, _ = dataset[0]
+
+    assert image_tensor.max().item() == 0.0
+    np.testing.assert_allclose(conditioned_qpos[:14], 0.0)
+
+
+def test_dataset_rejects_invalid_episode_start_probability(tmp_path):
+    with np.testing.assert_raises_regex(ValueError, "must be in"):
+        RelativeJointDataset([], {}, 2, episode_start_probability=1.1)
+
+
 def test_split_is_stratified_by_condition(tmp_path):
     for index in range(20):
         path = tmp_path / f"episode_{index:04d}.hdf5"

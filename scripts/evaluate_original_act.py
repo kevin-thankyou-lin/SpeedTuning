@@ -76,6 +76,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--task", required=True)
     parser.add_argument("--checkpoint-dir", type=Path, required=True)
+    parser.add_argument("--checkpoint-name", default="policy_best.ckpt")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--num-rollouts", type=int, default=50)
     parser.add_argument("--seed-base", type=int, default=1000)
@@ -84,7 +85,8 @@ def main():
     set_seed(1000)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     policy, _ = create_original_act_policy(device)
-    policy.load_state_dict(torch.load(args.checkpoint_dir / "policy_best.ckpt", map_location=device, weights_only=True))
+    checkpoint = args.checkpoint_dir / args.checkpoint_name
+    policy.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
     policy.to(device).eval()
     with (args.checkpoint_dir / "dataset_stats.pkl").open("rb") as stream:
         stats = pickle.load(stream)
@@ -98,6 +100,7 @@ def main():
     report = {
         "schema": "original-act-evaluation-v1",
         "task": task,
+        "checkpoint": str(checkpoint),
         "episodes": len(records),
         "successes": sum(item["success"] for item in records),
         "success_rate": float(np.mean([item["success"] for item in records])),

@@ -46,9 +46,10 @@ def main():
     parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--seed-base", type=int, default=2600000)
     parser.add_argument("--replan-interval", type=int, default=8)
+    parser.add_argument("--speed-condition", type=int, choices=(0, 1), required=True)
     args = parser.parse_args()
     task = normalize_task_name(args.task)
-    predictor = RelativeChunkPredictor(args.checkpoint)
+    predictor = RelativeChunkPredictor(args.checkpoint, args.speed_condition)
     rollouts = []
     for index in range(args.episodes):
         rollouts.append(
@@ -60,6 +61,7 @@ def main():
         "task": task,
         "checkpoint": str(args.checkpoint),
         "episodes": args.episodes,
+        "speed_condition": args.speed_condition,
         "successes": len(successes),
         "success_rate": len(successes) / args.episodes,
         "successful_mean_steps": (

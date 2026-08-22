@@ -37,15 +37,19 @@ class RelativeJointDataset(Dataset):
             targets = np.asarray(
                 root["target_qpos"][start : start + self.chunk_size], dtype=np.float32
             )
+            speed_condition = float(root.attrs["speed_condition"])
         valid = len(targets)
         padded = np.repeat(targets[-1:], self.chunk_size, axis=0)
         padded[:valid] = targets
         delta = padded - first_qpos[None]
         delta = (delta - self.delta_mean) / self.delta_std
         is_pad = np.arange(self.chunk_size) >= valid
+        conditioned_qpos = np.concatenate(
+            ((first_qpos - self.qpos_mean) / self.qpos_std, [speed_condition])
+        ).astype(np.float32)
         return (
             torch.from_numpy(image.transpose(2, 0, 1)[None]).float() / 255.0,
-            torch.from_numpy((first_qpos - self.qpos_mean) / self.qpos_std),
+            torch.from_numpy(conditioned_qpos),
             torch.from_numpy(delta),
             torch.from_numpy(is_pad),
         )
@@ -55,9 +59,27 @@ def split_episodes(dataset_dir, validation_fraction=0.1, seed=0):
     paths = sorted(Path(dataset_dir).glob("episode_*.hdf5"))
     if len(paths) < 2:
         raise ValueError("at least two episodes are required")
-    random.Random(seed).shuffle(paths)
-    validation_count = max(1, round(len(paths) * validation_fraction))
-    return paths[validation_count:], paths[:validation_count]
+    by_condition = {0: [], 1: []}
+    for path in paths:
+        with h5py.File(path, "r") as root:
+            condition = int(root.attrs["speed_condition"])
+        if condition not in by_condition:
+            raise ValueError(f"invalid speed_condition={condition} in {path}")
+        by_condition[condition].append(path)
+    train, validation = [], []
+    rng = random.Random(seed)
+    for group in by_condition.values():
+        if not group:
+            continue
+        rng.shuffle(group)
+        validation_count = max(1, round(len(group) * validation_fraction))
+        if validation_count >= len(group):
+            raise ValueError("each represented condition needs at least two episodes")
+        validation.extend(group[:validation_count])
+        train.extend(group[validation_count:])
+    rng.shuffle(train)
+    rng.shuffle(validation)
+    return train, validation
 
 
 def prepare_datasets(dataset_dir, output_dir, chunk_size, split_seed=0):
@@ -66,12 +88,22 @@ def prepare_datasets(dataset_dir, output_dir, chunk_size, split_seed=0):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     save_normalization(stats, output_dir / "normalization.npz")
+    def condition_counts(paths):
+        counts = {"slow": 0, "fast": 0}
+        for path in paths:
+            with h5py.File(path, "r") as root:
+                key = "fast" if int(root.attrs["speed_condition"]) else "slow"
+            counts[key] += 1
+        return counts
+
     (output_dir / "split.json").write_text(
         json.dumps(
             {
                 "train": [str(path) for path in train_paths],
                 "validation": [str(path) for path in validation_paths],
                 "normalization_fit": "train split only",
+                "train_condition_counts": condition_counts(train_paths),
+                "validation_condition_counts": condition_counts(validation_paths),
             },
             indent=2,
         )
@@ -97,7 +129,7 @@ class DiffusionJointPolicy(nn.Module):
         self.num_inference_steps = int(config.get("num_inference_steps", 10))
         self.image_encoder = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
         self.image_encoder.fc = nn.Identity()
-        self.qpos_encoder = nn.Sequential(nn.Linear(14, 128), nn.Mish(), nn.Linear(128, 128))
+        self.qpos_encoder = nn.Sequential(nn.Linear(15, 128), nn.Mish(), nn.Linear(128, 128))
         self.noise_pred_net = ConditionalUnet1D(
             input_dim=14,
             global_cond_dim=640,
@@ -172,6 +204,8 @@ def create_policy(kind, chunk_size, device, lr=1e-4):
         "lr": float(lr),
         "lr_backbone": float(lr) / 10,
         "device": str(device),
+        "qpos_dim": 15,
+        "action_dim": 14,
     }
     if kind == "act":
         from policy import ACTPolicy
@@ -185,7 +219,7 @@ def create_policy(kind, chunk_size, device, lr=1e-4):
 class RelativeChunkPredictor:
     """Decode normalized relative chunks back to absolute joint commands."""
 
-    def __init__(self, checkpoint, device=None):
+    def __init__(self, checkpoint, speed_condition=0, device=None):
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
         )
@@ -201,12 +235,27 @@ class RelativeChunkPredictor:
         self.qpos_std = np.asarray(stats["qpos_std"], dtype=np.float32)
         self.delta_mean = np.asarray(stats["delta_mean"], dtype=np.float32)
         self.delta_std = np.asarray(stats["delta_std"], dtype=np.float32)
+        self.set_speed_condition(speed_condition)
 
-    def __call__(self, observation):
+    def set_speed_condition(self, speed_condition):
+        """Set the externally controlled mode used at the next policy query."""
+
+        self.speed_condition = float(speed_condition)
+        if self.speed_condition not in (0.0, 1.0):
+            raise ValueError("speed_condition must be 0 (slow) or 1 (fast)")
+        return self
+
+    def __call__(self, observation, speed_condition=None):
+        if speed_condition is not None:
+            self.set_speed_condition(speed_condition)
         first_qpos = np.asarray(observation["qpos"], dtype=np.float32)
-        normalized_qpos = (first_qpos - self.qpos_mean) / self.qpos_std
+        normalized_qpos = np.concatenate(
+            ((first_qpos - self.qpos_mean) / self.qpos_std, [self.speed_condition])
+        ).astype(np.float32)
         image = np.asarray(observation["images"]["angle"], dtype=np.uint8)
-        image = torch.from_numpy(image.transpose(2, 0, 1)[None, None]).float()
+        image = torch.from_numpy(
+            image.transpose(2, 0, 1).copy()[None, None]
+        ).float()
         qpos = torch.from_numpy(normalized_qpos[None]).float()
         with torch.inference_mode():
             normalized_delta = self.model(

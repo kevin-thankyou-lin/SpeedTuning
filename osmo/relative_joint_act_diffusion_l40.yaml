@@ -1,0 +1,122 @@
+version: 2
+workflow:
+  name: speedtuning-relative-joint-act-diffusion-l40-20260821-v1
+  timeout:
+    exec_timeout: 12h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 64Gi
+  groups:
+    - name: train
+      tasks:
+        - name: pick
+          lead: true
+          image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: pick
+            RUNTIME_TASK: pick_and_place
+            EXPECTED_EPISODES: "100"
+            EVAL_SEED_BASE: "3100000"
+          files: &run_file
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=b512569be587b0dbe04cb8c5eaf6b901de11f28c
+                EXPERIMENT=speedtuning-relative-joint-act-diffusion-20260821-v1
+                PERSIST_ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/$EXPERIMENT
+                RUN=$PERSIST_ROOT/$TASK
+                OUTPUT=/osmo/run/outputs/$TASK
+                CODE=/osmo/run/workspace/SpeedTuning-$TASK
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+
+                test ! -e "$RUN" || { echo "refusing to overwrite $RUN" >&2; exit 30; }
+                mkdir -p "$RUN" "$OUTPUT"
+                date --iso-8601=seconds | tee "$RUN/started_at.txt"
+                nvidia-smi -L | tee "$RUN/gpus.txt"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m pytest -q | tee "$RUN/pytest.log"
+
+                "$PYTHON" -m scripts.replay_relative_imitation_dataset \
+                  --manifest experiments/relative_joint_rollouts_v1/manifest.json \
+                  --output-root "$RUN/dataset" --task "$TASK" \
+                  2>&1 | tee "$RUN/replay.log"
+                count=$(find "$RUN/dataset/$TASK" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)
+                test "$count" -eq "$EXPECTED_EPISODES"
+
+                for KIND in act diffusion; do
+                  "$PYTHON" -m scripts.train_relative_imitation \
+                    --kind "$KIND" --dataset-dir "$RUN/dataset/$TASK" \
+                    --output-dir "$RUN/checkpoints/$KIND" --steps 20000 \
+                    --chunk-size 48 --batch-size 16 --seed 0 \
+                    2>&1 | tee "$RUN/train-$KIND.log"
+                  test -s "$RUN/checkpoints/$KIND/best.pt"
+                  "$PYTHON" -m scripts.evaluate_relative_imitation \
+                    --task "$RUNTIME_TASK" --checkpoint "$RUN/checkpoints/$KIND/best.pt" \
+                    --output "$RUN/eval-$KIND.json" --episodes 100 \
+                    --seed-base "$EVAL_SEED_BASE" --replan-interval 8 \
+                    2>&1 | tee "$RUN/eval-$KIND.log"
+                done
+
+                export RUN TASK SOURCE_COMMIT
+                "$PYTHON" - <<'PY'
+                import hashlib, json, os
+                from pathlib import Path
+                run = Path(os.environ["RUN"])
+                result = {
+                    "task": os.environ["TASK"],
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "relative_action": "target_qpos[t+k] - observations/qpos[t]",
+                    "normalization": "train-only per chunk step and joint",
+                    "act": json.loads((run / "eval-act.json").read_text()),
+                    "diffusion": json.loads((run / "eval-diffusion.json").read_text()),
+                }
+                (run / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
+                for path in sorted(run.glob("checkpoints/*/best.pt")):
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    with (run / "SHA256SUMS").open("a") as stream:
+                        stream.write(f"{digest}  {path.relative_to(run)}\n")
+                PY
+                date --iso-8601=seconds | tee "$RUN/completed_at.txt"
+                cp "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/pytest.log" "$OUTPUT"/
+                echo "RELATIVE_JOINT_IMITATION_COMPLETE task=$TASK root=$RUN"
+                cat "$RUN/summary.json"
+        - name: tea
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: tea
+            RUNTIME_TASK: tea_bag
+            EXPECTED_EPISODES: "100"
+            EVAL_SEED_BASE: "3200000"
+          files: *run_file
+        - name: insertion
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: insertion
+            RUNTIME_TASK: insertion
+            EXPECTED_EPISODES: "98"
+            EVAL_SEED_BASE: "3300000"
+          files: *run_file

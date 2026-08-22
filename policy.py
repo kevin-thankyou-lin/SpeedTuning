@@ -23,6 +23,9 @@ class ACTPolicy(nn.Module):
         self.deterministic_training = bool(
             args_override.get('deterministic_training', False)
         )
+        self.original_loss_reduction = bool(
+            args_override.get('original_loss_reduction', False)
+        )
 
     def __call__(self, qpos, image, actions=None, is_pad=None):
         env_state = None
@@ -42,7 +45,13 @@ class ACTPolicy(nn.Module):
                 )
                 total_kld, _, _ = kl_divergence(mu, logvar)
                 loss_dict['kl'] = total_kld[0]
-            l1 = masked_l1_loss(actions, a_hat, is_pad)
+            if self.original_loss_reduction:
+                # Preserve the public ACT repository exactly: padding is masked,
+                # then the mean is taken over the complete [B, K, 14] tensor.
+                all_l1 = F.l1_loss(actions, a_hat, reduction='none')
+                l1 = (all_l1 * ~is_pad.unsqueeze(-1)).mean()
+            else:
+                l1 = masked_l1_loss(actions, a_hat, is_pad)
             loss_dict['l1'] = l1
             loss_dict['loss'] = loss_dict['l1'] + loss_dict['kl'] * self.kl_weight
             return loss_dict

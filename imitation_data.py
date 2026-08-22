@@ -350,8 +350,38 @@ def record_scheduled_joint_episode(
     }
 
 
+def _quantile_bounds(array, axis=0, minimum_span=1e-3):
+    """Return effective q01/q99 bounds with a symmetric minimum span."""
+
+    array = np.asarray(array, dtype=np.float32)
+    q01 = np.quantile(array, 0.01, axis=axis).astype(np.float32)
+    q99 = np.quantile(array, 0.99, axis=axis).astype(np.float32)
+    center = (q01 + q99) / 2
+    span = np.maximum(q99 - q01, float(minimum_span))
+    return q01, q99, center - span / 2, center + span / 2
+
+
+def robust_normalize(value, low, high):
+    """Clip to fitted bounds and map them linearly to [-1, 1]."""
+
+    value = np.asarray(value, dtype=np.float32)
+    low = np.asarray(low, dtype=np.float32)
+    high = np.asarray(high, dtype=np.float32)
+    clipped = np.clip(value, low, high)
+    return 2 * (clipped - low) / (high - low) - 1
+
+
+def robust_denormalize(value, low, high):
+    """Clip a model output to [-1, 1] and restore physical units."""
+
+    value = np.clip(np.asarray(value, dtype=np.float32), -1.0, 1.0)
+    low = np.asarray(low, dtype=np.float32)
+    high = np.asarray(high, dtype=np.float32)
+    return low + (value + 1) * 0.5 * (high - low)
+
+
 def fit_normalization(episode_paths, chunk_size):
-    """Fit train-only qpos and per-chunk-step delta statistics."""
+    """Fit train-only q01/q99 qpos and per-chunk-step delta bounds."""
 
     import h5py
 
@@ -367,18 +397,72 @@ def fit_normalization(episode_paths, chunk_size):
             for offset, delta in enumerate(targets[start:end] - anchor[None]):
                 delta_values[offset].append(delta)
     qpos = np.concatenate(qpos_values)
-    delta_mean, delta_std = [], []
+    qpos_q01, qpos_q99, qpos_low, qpos_high = _quantile_bounds(qpos, axis=0)
+    delta_q01, delta_q99, delta_low, delta_high = [], [], [], []
     for values in delta_values:
         array = np.asarray(values, dtype=np.float32)
-        delta_mean.append(array.mean(axis=0))
-        delta_std.append(np.maximum(array.std(axis=0), 1e-3))
+        q01, q99, low, high = _quantile_bounds(array, axis=0)
+        delta_q01.append(q01)
+        delta_q99.append(q99)
+        delta_low.append(low)
+        delta_high.append(high)
     return {
-        "qpos_mean": qpos.mean(axis=0),
-        "qpos_std": np.maximum(qpos.std(axis=0), 1e-3),
-        "delta_mean": np.asarray(delta_mean),
-        "delta_std": np.asarray(delta_std),
+        "qpos_q01": qpos_q01,
+        "qpos_q99": qpos_q99,
+        "qpos_low": qpos_low,
+        "qpos_high": qpos_high,
+        "delta_q01": np.asarray(delta_q01),
+        "delta_q99": np.asarray(delta_q99),
+        "delta_low": np.asarray(delta_low),
+        "delta_high": np.asarray(delta_high),
         "chunk_size": int(chunk_size),
+        "normalization": "train-only q01/q99 clipped linear scaling to [-1,1]",
+        "minimum_span": 1e-3,
         "relative_action": "target_qpos[t+k] - observations/qpos[t]",
+    }
+
+
+def normalization_clipping_report(episode_paths, stats, chunk_size):
+    """Measure how often a split falls outside train-fitted robust bounds."""
+
+    import h5py
+
+    qpos_below = qpos_above = qpos_total = 0
+    delta_below = delta_above = delta_total = 0
+    qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
+    qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
+    delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
+    delta_high = np.asarray(stats["delta_high"], dtype=np.float32)
+    for path in map(Path, episode_paths):
+        with h5py.File(path, "r") as root:
+            qpos = np.asarray(root["observations/qpos"], dtype=np.float32)
+            targets = np.asarray(root["target_qpos"], dtype=np.float32)
+        qpos_below += int(np.count_nonzero(qpos < qpos_low))
+        qpos_above += int(np.count_nonzero(qpos > qpos_high))
+        qpos_total += int(qpos.size)
+        for start, anchor in enumerate(qpos):
+            stop = min(start + int(chunk_size), len(targets))
+            delta = targets[start:stop] - anchor[None]
+            bounds_low = delta_low[: len(delta)]
+            bounds_high = delta_high[: len(delta)]
+            delta_below += int(np.count_nonzero(delta < bounds_low))
+            delta_above += int(np.count_nonzero(delta > bounds_high))
+            delta_total += int(delta.size)
+
+    def rates(below, above, total):
+        denominator = max(int(total), 1)
+        return {
+            "elements": int(total),
+            "below": int(below),
+            "above": int(above),
+            "below_fraction": below / denominator,
+            "above_fraction": above / denominator,
+            "clipped_fraction": (below + above) / denominator,
+        }
+
+    return {
+        "qpos": rates(qpos_below, qpos_above, qpos_total),
+        "delta": rates(delta_below, delta_above, delta_total),
     }
 
 

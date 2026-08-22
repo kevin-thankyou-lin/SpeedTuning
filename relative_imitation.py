@@ -13,17 +13,23 @@ from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 
-from imitation_data import fit_normalization, save_normalization
+from imitation_data import (
+    fit_normalization,
+    normalization_clipping_report,
+    robust_denormalize,
+    robust_normalize,
+    save_normalization,
+)
 
 
 class RelativeJointDataset(Dataset):
     def __init__(self, paths, stats, chunk_size):
         self.paths = tuple(map(Path, paths))
         self.chunk_size = int(chunk_size)
-        self.qpos_mean = np.asarray(stats["qpos_mean"], dtype=np.float32)
-        self.qpos_std = np.asarray(stats["qpos_std"], dtype=np.float32)
-        self.delta_mean = np.asarray(stats["delta_mean"], dtype=np.float32)
-        self.delta_std = np.asarray(stats["delta_std"], dtype=np.float32)
+        self.qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
+        self.qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
+        self.delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
+        self.delta_high = np.asarray(stats["delta_high"], dtype=np.float32)
 
     def __len__(self):
         return len(self.paths)
@@ -42,10 +48,10 @@ class RelativeJointDataset(Dataset):
         padded = np.repeat(targets[-1:], self.chunk_size, axis=0)
         padded[:valid] = targets
         delta = padded - first_qpos[None]
-        delta = (delta - self.delta_mean) / self.delta_std
+        delta = robust_normalize(delta, self.delta_low, self.delta_high)
         is_pad = np.arange(self.chunk_size) >= valid
         conditioned_qpos = np.concatenate(
-            ((first_qpos - self.qpos_mean) / self.qpos_std, [speed_condition])
+            (robust_normalize(first_qpos, self.qpos_low, self.qpos_high), [speed_condition])
         ).astype(np.float32)
         return (
             torch.from_numpy(image.transpose(2, 0, 1)[None]).float() / 255.0,
@@ -88,6 +94,16 @@ def prepare_datasets(dataset_dir, output_dir, chunk_size, split_seed=0):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     save_normalization(stats, output_dir / "normalization.npz")
+    clipping = {
+        "normalization": stats["normalization"],
+        "train": normalization_clipping_report(train_paths, stats, chunk_size),
+        "validation": normalization_clipping_report(
+            validation_paths, stats, chunk_size
+        ),
+    }
+    (output_dir / "normalization_audit.json").write_text(
+        json.dumps(clipping, indent=2) + "\n"
+    )
     def condition_counts(paths):
         counts = {"slow": 0, "fast": 0}
         for path in paths:
@@ -102,6 +118,8 @@ def prepare_datasets(dataset_dir, output_dir, chunk_size, split_seed=0):
                 "train": [str(path) for path in train_paths],
                 "validation": [str(path) for path in validation_paths],
                 "normalization_fit": "train split only",
+                "normalization": stats["normalization"],
+                "normalization_audit": str(output_dir / "normalization_audit.json"),
                 "train_condition_counts": condition_counts(train_paths),
                 "validation_condition_counts": condition_counts(validation_paths),
             },
@@ -231,10 +249,18 @@ class RelativeChunkPredictor:
         self.model.load_state_dict(payload["model_state_dict"])
         self.model.eval()
         stats = payload["stats"]
-        self.qpos_mean = np.asarray(stats["qpos_mean"], dtype=np.float32)
-        self.qpos_std = np.asarray(stats["qpos_std"], dtype=np.float32)
-        self.delta_mean = np.asarray(stats["delta_mean"], dtype=np.float32)
-        self.delta_std = np.asarray(stats["delta_std"], dtype=np.float32)
+        self.qpos_low = np.asarray(stats["qpos_low"], dtype=np.float32)
+        self.qpos_high = np.asarray(stats["qpos_high"], dtype=np.float32)
+        self.delta_low = np.asarray(stats["delta_low"], dtype=np.float32)
+        self.delta_high = np.asarray(stats["delta_high"], dtype=np.float32)
+        self._clip_counts = {
+            "qpos_below": 0,
+            "qpos_above": 0,
+            "qpos_elements": 0,
+            "delta_below": 0,
+            "delta_above": 0,
+            "delta_elements": 0,
+        }
         self.set_speed_condition(speed_condition)
 
     def set_speed_condition(self, speed_condition):
@@ -249,8 +275,18 @@ class RelativeChunkPredictor:
         if speed_condition is not None:
             self.set_speed_condition(speed_condition)
         first_qpos = np.asarray(observation["qpos"], dtype=np.float32)
+        self._clip_counts["qpos_below"] += int(
+            np.count_nonzero(first_qpos < self.qpos_low)
+        )
+        self._clip_counts["qpos_above"] += int(
+            np.count_nonzero(first_qpos > self.qpos_high)
+        )
+        self._clip_counts["qpos_elements"] += int(first_qpos.size)
         normalized_qpos = np.concatenate(
-            ((first_qpos - self.qpos_mean) / self.qpos_std, [self.speed_condition])
+            (
+                robust_normalize(first_qpos, self.qpos_low, self.qpos_high),
+                [self.speed_condition],
+            )
         ).astype(np.float32)
         image = np.asarray(observation["images"]["angle"], dtype=np.uint8)
         image = torch.from_numpy(
@@ -261,5 +297,34 @@ class RelativeChunkPredictor:
             normalized_delta = self.model(
                 qpos.to(self.device), image.to(self.device) / 255.0
             )[0].cpu().numpy()
-        delta = normalized_delta * self.delta_std + self.delta_mean
+        self._clip_counts["delta_below"] += int(
+            np.count_nonzero(normalized_delta < -1.0)
+        )
+        self._clip_counts["delta_above"] += int(
+            np.count_nonzero(normalized_delta > 1.0)
+        )
+        self._clip_counts["delta_elements"] += int(normalized_delta.size)
+        delta = robust_denormalize(
+            normalized_delta, self.delta_low, self.delta_high
+        )
         return first_qpos[None] + delta
+
+    def clipping_metrics(self):
+        def summarize(prefix):
+            below = self._clip_counts[f"{prefix}_below"]
+            above = self._clip_counts[f"{prefix}_above"]
+            total = self._clip_counts[f"{prefix}_elements"]
+            denominator = max(total, 1)
+            return {
+                "elements": total,
+                "below": below,
+                "above": above,
+                "below_fraction": below / denominator,
+                "above_fraction": above / denominator,
+                "clipped_fraction": (below + above) / denominator,
+            }
+
+        return {
+            "qpos_input": summarize("qpos"),
+            "delta_output": summarize("delta"),
+        }

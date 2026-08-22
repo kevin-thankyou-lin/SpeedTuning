@@ -5,6 +5,8 @@ from imitation_data import (
     decode_relative_chunk,
     fit_normalization,
     relative_chunk,
+    robust_denormalize,
+    robust_normalize,
     speed_condition_from_schedule,
 )
 from relative_imitation import RelativeJointDataset, split_episodes
@@ -30,10 +32,26 @@ def test_normalization_is_per_chunk_step_and_joint(tmp_path):
             root.create_dataset("target_qpos", data=target)
         paths.append(path)
     stats = fit_normalization(paths, chunk_size=3)
-    assert stats["qpos_mean"].shape == (14,)
-    assert stats["delta_mean"].shape == (3, 14)
-    assert stats["delta_std"].shape == (3, 14)
-    assert np.all(stats["delta_std"] >= 1e-3)
+    assert stats["qpos_q01"].shape == (14,)
+    assert stats["qpos_q99"].shape == (14,)
+    assert stats["delta_q01"].shape == (3, 14)
+    assert stats["delta_q99"].shape == (3, 14)
+    assert stats["delta_low"].shape == (3, 14)
+    assert np.all(stats["delta_high"] - stats["delta_low"] >= 1e-3 - 1e-7)
+
+
+def test_q01_q99_scaling_clips_and_round_trips_inside_bounds():
+    low = np.array([-2.0, 0.0], dtype=np.float32)
+    high = np.array([2.0, 4.0], dtype=np.float32)
+    value = np.array([-3.0, 2.0], dtype=np.float32)
+    normalized = robust_normalize(value, low, high)
+    np.testing.assert_allclose(normalized, [-1.0, 0.0])
+    np.testing.assert_allclose(
+        robust_denormalize(normalized, low, high), [-2.0, 2.0]
+    )
+    np.testing.assert_allclose(
+        robust_denormalize([-4.0, 4.0], low, high), low + [0.0, 4.0]
+    )
 
 
 def test_speed_condition_is_zero_only_for_uniform_native():
@@ -53,10 +71,10 @@ def test_dataset_appends_raw_condition_without_changing_action_dim(tmp_path):
         observations.create_group("images").create_dataset("angle", data=image)
         root.create_dataset("target_qpos", data=target)
     stats = {
-        "qpos_mean": np.zeros(14),
-        "qpos_std": np.ones(14),
-        "delta_mean": np.zeros((2, 14)),
-        "delta_std": np.ones((2, 14)),
+        "qpos_low": np.full(14, -1.0),
+        "qpos_high": np.full(14, 1.0),
+        "delta_low": np.full((2, 14), -2.0),
+        "delta_high": np.full((2, 14), 2.0),
     }
     _, conditioned_qpos, action, _ = RelativeJointDataset([path], stats, 2)[0]
     assert conditioned_qpos.shape == (15,)

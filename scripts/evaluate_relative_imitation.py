@@ -67,6 +67,7 @@ def main():
         "successful_mean_steps": (
             float(np.mean([item["physics_steps"] for item in successes])) if successes else None
         ),
+        "clipping": predictor.clipping_metrics(),
         "rollouts": rollouts,
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

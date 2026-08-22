@@ -1,6 +1,6 @@
 version: 2
 workflow:
-  name: speedtuning-pick-start-normalization-debug-20260822-v2
+  name: speedtuning-pick-start-normalization-debug-20260822-v3
   timeout:
     exec_timeout: 10h
     queue_timeout: 2h
@@ -31,12 +31,12 @@ workflow:
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=202afd403d1ddaf952bf8936f9da01bfa98ce2c5
+                SOURCE_COMMIT=a56b23ff032680297d5c21c1331495a1150c9d8d
                 BASE=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-20260821-v2/pick
                 BASE_CHECKPOINT=$BASE/checkpoints/slow_150/act/best.pt
                 BASE_CHECKPOINT_SHA=cd984a8812ce5679ee3083cb5c0fb17ff92d29dc62e47b9e11b9d638a5ddd6ba
                 DATASET=$BASE/datasets/slow_150/pick_and_place
-                ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-pick-start-normalization-20260822-v2/$VARIANT
+                ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-pick-start-normalization-20260822-v3/$VARIANT
                 CODE=/osmo/run/workspace/SpeedTuning-$VARIANT
                 OUTPUT=/osmo/run/outputs/$VARIANT
                 START_PROBABILITY=0.25

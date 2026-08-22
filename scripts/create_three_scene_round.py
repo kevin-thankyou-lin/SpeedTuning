@@ -7,6 +7,7 @@ import argparse
 import json
 import secrets
 import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -66,6 +67,11 @@ def main() -> int:
     for task in source_contract["tasks"].values():
         used.update(int(value) for value in task["evaluation_seeds"])
     root.mkdir(parents=True)
+    repository_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+    ).strip()
     tasks = {}
     for lane, (runtime_task, config_name) in TASKS.items():
         source_task = source_contract["tasks"][lane]
@@ -99,6 +105,7 @@ def main() -> int:
         root / "CONTRACT.json",
         {
             "schema": "three-scene-learned-phase-generalization-v1",
+            "repository_commit": repository_commit,
             "source_round": str(source),
             "learning_states_per_task": 3,
             "learning_episodes_per_method": 50,

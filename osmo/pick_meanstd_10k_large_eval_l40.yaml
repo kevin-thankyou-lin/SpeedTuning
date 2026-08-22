@@ -1,0 +1,89 @@
+version: 2
+workflow:
+  name: speedtuning-pick-meanstd-10k-large-eval-20260822-v1
+  timeout:
+    exec_timeout: 8h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 48Gi
+      platform: ovx-l40
+      storage: 40Gi
+  groups:
+    - name: evaluation
+      tasks:
+        - name: pick-meanstd-10k
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=6b0f445c14b29ab225ec898fc019ab41d1b5df80
+                CHECKPOINT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-pick-normalization-recovery-20260822-v1/scratch-meanstd-full48/checkpoint/step-10000.pt
+                CHECKPOINT_SHA=60465ebdda32627e00c011fbdac77b91b26e2c8bb36d307e72bd005d10649dcd
+                ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-pick-meanstd-10k-large-eval-20260822-v1
+                CODE=/osmo/run/workspace/SpeedTuning-pick-meanstd-10k-eval
+                OUTPUT=/osmo/run/outputs/evaluation
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+                test -s "$CHECKPOINT"
+                echo "$CHECKPOINT_SHA  $CHECKPOINT" | sha256sum -c -
+                test ! -e "$ROOT" || { echo "refusing to overwrite $ROOT" >&2; exit 30; }
+                mkdir -p "$ROOT" "$OUTPUT"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m scripts.evaluate_relative_imitation \
+                  --task pick_and_place --checkpoint "$CHECKPOINT" \
+                  --output "$ROOT/training-100.json" --episodes 100 \
+                  --seed-base 4100001 --replan-interval 8 --speed-condition 0 \
+                  2>&1 | tee "$ROOT/training-100.log"
+                "$PYTHON" -m scripts.evaluate_relative_imitation \
+                  --task pick_and_place --checkpoint "$CHECKPOINT" \
+                  --output "$ROOT/fresh-100.json" --episodes 100 \
+                  --seed-base 6200000 --replan-interval 8 --speed-condition 0 \
+                  2>&1 | tee "$ROOT/fresh-100.log"
+                ROOT="$ROOT" SOURCE_COMMIT="$SOURCE_COMMIT" CHECKPOINT_SHA="$CHECKPOINT_SHA" "$PYTHON" - <<'PY'
+                import json
+                import os
+                from pathlib import Path
+
+                root = Path(os.environ["ROOT"])
+                reports = {}
+                for split in ("training", "fresh"):
+                    value = json.loads((root / f"{split}-100.json").read_text())
+                    reports[split] = {
+                        key: value[key]
+                        for key in (
+                            "episodes", "successes", "success_rate",
+                            "successful_mean_steps", "clipping",
+                        )
+                    }
+                summary = {
+                    "schema": "pick-meanstd-10k-large-eval-v1",
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "checkpoint_sha256": os.environ["CHECKPOINT_SHA"],
+                    "training_seed_base": 4100001,
+                    "fresh_seed_base": 6200000,
+                    "reports": reports,
+                }
+                (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                print(json.dumps(summary, indent=2))
+                PY
+                cp "$ROOT/summary.json" "$ROOT/training-100.json" "$ROOT/fresh-100.json" "$OUTPUT"/
+                echo "PICK_MEANSTD_10K_LARGE_EVAL_COMPLETE root=$ROOT"

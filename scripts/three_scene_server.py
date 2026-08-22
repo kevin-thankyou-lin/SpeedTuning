@@ -80,6 +80,8 @@ class ThreeSceneServer:
         if self.state_path.exists():
             self.state = json.loads(self.state_path.read_text())
             self._validate_identity()
+            if self._merge_native_candidate():
+                self._persist()
         else:
             self.state = self._initialize()
 
@@ -122,7 +124,12 @@ class ThreeSceneServer:
             "budget": self.budget,
             "episodes_used": 3,
             "native": native,
-            "candidates": {},
+            "candidates": {
+                schedule_hash((1, 1, 1, 1)): {
+                    "schedule": [1.0, 1.0, 1.0, 1.0],
+                    "discovery": native,
+                }
+            },
             "probe_hashes": [],
             "screen_hashes": [],
             "refinement_episodes": 0,
@@ -136,6 +143,19 @@ class ThreeSceneServer:
         }
         write_json(self.state_path, state)
         return state
+
+    def _merge_native_candidate(self) -> bool:
+        """Expose the already-paid native 3/3 baseline as a lawful finalist."""
+
+        identifier = schedule_hash((1, 1, 1, 1))
+        candidate = self.state["candidates"].get(identifier)
+        if candidate is not None and all(candidate["discovery"]):
+            return False
+        self.state["candidates"][identifier] = {
+            "schedule": [1.0, 1.0, 1.0, 1.0],
+            "discovery": self.state["native"],
+        }
+        return True
 
     def _public_rollout(self, result: dict) -> dict:
         value = {

@@ -60,6 +60,17 @@ def test_three_scene_rank_uses_measured_shared_bank(server):
     assert server.rank([first["schedule_hash"], second["schedule_hash"]])["cache_hit"]
 
 
+def test_native_baseline_is_eligible_without_duplicate_rollouts(server):
+    candidate = server.probe([2, 1, 1, 1])
+    server.screen(candidate["schedule_hash"])
+    native_hash = module.schedule_hash((1, 1, 1, 1))
+
+    result = server.rank([candidate["schedule_hash"], native_hash])
+
+    assert result["budget_used"] == 26
+    assert server.state["episodes_used"] == 26
+
+
 def test_screen_is_fail_fast_and_ineligible_candidate_cannot_rank(server):
     failing = server.probe([2, 1, 1, 1])
     # Make scene B fail for this schedule.

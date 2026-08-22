@@ -1,0 +1,198 @@
+version: 2
+workflow:
+  name: speedtuning-pick-start-normalization-debug-20260822-v2
+  timeout:
+    exec_timeout: 10h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 48Gi
+  groups:
+    - name: comparison
+      tasks:
+        - name: finetune-q01-p25
+          lead: true
+          image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            VARIANT: finetune-q01-p25
+            NORMALIZATION: q01_q99
+            STEPS: "5000"
+            CHECKPOINT_EVERY: "1000"
+            LEARNING_RATE: "5e-5"
+            INITIALIZE_FROM_BASE: "1"
+          files: &run_file
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=202afd403d1ddaf952bf8936f9da01bfa98ce2c5
+                BASE=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-20260821-v2/pick
+                BASE_CHECKPOINT=$BASE/checkpoints/slow_150/act/best.pt
+                BASE_CHECKPOINT_SHA=cd984a8812ce5679ee3083cb5c0fb17ff92d29dc62e47b9e11b9d638a5ddd6ba
+                DATASET=$BASE/datasets/slow_150/pick_and_place
+                ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-pick-start-normalization-20260822-v2/$VARIANT
+                CODE=/osmo/run/workspace/SpeedTuning-$VARIANT
+                OUTPUT=/osmo/run/outputs/$VARIANT
+                START_PROBABILITY=0.25
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+                test -d "$DATASET"
+                test -s "$BASE_CHECKPOINT"
+                echo "$BASE_CHECKPOINT_SHA  $BASE_CHECKPOINT" | sha256sum -c -
+                test ! -e "$ROOT" || { echo "refusing to overwrite $ROOT" >&2; exit 30; }
+                mkdir -p "$ROOT" "$OUTPUT"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m pytest -q tests/test_imitation_data.py tests/test_chunked_policies.py tests/test_training_monitor.py
+                DATASET="$DATASET" "$PYTHON" - <<'PY'
+                import glob, h5py, os
+                paths = sorted(glob.glob(os.environ["DATASET"] + "/episode_*.hdf5"))
+                assert len(paths) == 150, len(paths)
+                seeds = []
+                for path in paths[:10]:
+                    with h5py.File(path, "r") as root:
+                        seeds.append(int(root.attrs["seed"]))
+                assert seeds == list(range(4100001, 4100011)), seeds
+                print("training-pose-bank", seeds)
+                PY
+
+                INITIAL_ARGS=()
+                if [ "$INITIALIZE_FROM_BASE" = 1 ]; then
+                  INITIAL_ARGS=(--initial-checkpoint "$BASE_CHECKPOINT")
+                fi
+                (
+                  set +e
+                  "$PYTHON" -m scripts.train_relative_imitation \
+                    --kind act --dataset-dir "$DATASET" --output-dir "$ROOT/checkpoint" \
+                    --steps "$STEPS" --chunk-size 48 --batch-size 16 \
+                    --lr "$LEARNING_RATE" --seed 0 \
+                    --episode-start-probability "$START_PROBABILITY" \
+                    --normalization "$NORMALIZATION" \
+                    --checkpoint-every "$CHECKPOINT_EVERY" \
+                    "${INITIAL_ARGS[@]}" \
+                    2>&1 | tee "$ROOT/train.log"
+                  echo "${PIPESTATUS[0]}" > "$ROOT/train.rc"
+                ) &
+                TRAIN_JOB=$!
+
+                evaluate_checkpoint() {
+                  CHECKPOINT=$1
+                  LABEL=$(basename "$CHECKPOINT" .pt)
+                  MARKER=$ROOT/.evaluated-$LABEL
+                  test ! -e "$MARKER" || return 0
+                  "$PYTHON" -m scripts.evaluate_relative_imitation \
+                    --task pick_and_place --checkpoint "$CHECKPOINT" \
+                    --output "$ROOT/eval-$LABEL-training.json" --episodes 10 \
+                    --seed-base 4100001 --replan-interval 8 --speed-condition 0 \
+                    2>&1 | tee "$ROOT/eval-$LABEL-training.log"
+                  "$PYTHON" -m scripts.evaluate_relative_imitation \
+                    --task pick_and_place --checkpoint "$CHECKPOINT" \
+                    --output "$ROOT/eval-$LABEL-fresh.json" --episodes 10 \
+                    --seed-base 6100000 --replan-interval 8 --speed-condition 0 \
+                    2>&1 | tee "$ROOT/eval-$LABEL-fresh.log"
+                  touch "$MARKER"
+                }
+
+                while kill -0 "$TRAIN_JOB" 2>/dev/null; do
+                  for CHECKPOINT in "$ROOT"/checkpoint/step-*.pt; do
+                    test -e "$CHECKPOINT" || continue
+                    evaluate_checkpoint "$CHECKPOINT"
+                  done
+                  sleep 5
+                done
+                wait "$TRAIN_JOB"
+                test "$(cat "$ROOT/train.rc")" = 0
+                for CHECKPOINT in "$ROOT"/checkpoint/step-*.pt; do
+                  test -e "$CHECKPOINT" || continue
+                  evaluate_checkpoint "$CHECKPOINT"
+                done
+                evaluate_checkpoint "$ROOT/checkpoint/best.pt"
+
+                export ROOT VARIANT START_PROBABILITY NORMALIZATION STEPS SOURCE_COMMIT BASE_CHECKPOINT_SHA INITIALIZE_FROM_BASE
+                "$PYTHON" - <<'PY'
+                import hashlib, json, os
+                from pathlib import Path
+                root = Path(os.environ["ROOT"])
+                evaluations = {}
+                for path in sorted(root.glob("eval-*.json")):
+                    value = json.loads(path.read_text())
+                    evaluations[path.stem] = {
+                        key: value[key]
+                        for key in (
+                            "checkpoint", "episodes", "successes", "success_rate",
+                            "successful_mean_steps", "clipping",
+                        )
+                    }
+                training = {
+                    key: value for key, value in evaluations.items()
+                    if key.endswith("-training")
+                }
+                best_key, best_value = max(
+                    training.items(), key=lambda item: (item[1]["successes"], item[0])
+                )
+                summary = {
+                    "schema": "pick-start-normalization-debug-v2",
+                    "variant": os.environ["VARIANT"],
+                    "normalization": os.environ["NORMALIZATION"],
+                    "episode_start_probability": float(os.environ["START_PROBABILITY"]),
+                    "training_steps": int(os.environ["STEPS"]),
+                    "initialized_from_base": os.environ["INITIALIZE_FROM_BASE"] == "1",
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "base_checkpoint_sha256": os.environ["BASE_CHECKPOINT_SHA"],
+                    "training_pose_seeds": list(range(4100001, 4100011)),
+                    "fresh_monitor_seeds": list(range(6100000, 6100010)),
+                    "best_training_evaluation": best_key,
+                    "best_training_successes": best_value["successes"],
+                    "training_gate_passed": best_value["successes"] >= 9,
+                    "evaluations": evaluations,
+                }
+                (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                with (root / "SHA256SUMS").open("w") as stream:
+                    for path in sorted(root.glob("checkpoint/*.pt")):
+                        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                        stream.write(f"{digest}  {path.relative_to(root)}\n")
+                print(json.dumps(summary, indent=2))
+                PY
+                cp "$ROOT/summary.json" "$ROOT/SHA256SUMS" "$OUTPUT"/
+                echo "PICK_START_NORMALIZATION_DEBUG_COMPLETE variant=$VARIANT root=$ROOT"
+        - name: scratch-q01-p25
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            VARIANT: scratch-q01-p25
+            NORMALIZATION: q01_q99
+            STEPS: "20000"
+            CHECKPOINT_EVERY: "5000"
+            LEARNING_RATE: "1e-4"
+            INITIALIZE_FROM_BASE: "0"
+          files: *run_file
+        - name: scratch-meanstd-p25
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            VARIANT: scratch-meanstd-p25
+            NORMALIZATION: mean_std
+            STEPS: "20000"
+            CHECKPOINT_EVERY: "5000"
+            LEARNING_RATE: "1e-4"
+            INITIALIZE_FROM_BASE: "0"
+          files: *run_file

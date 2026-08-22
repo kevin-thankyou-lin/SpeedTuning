@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from dm_control.rl import control
 
 from relative_imitation import RelativeChunkPredictor
 from sim_env import make_sim_env
@@ -29,13 +30,30 @@ def rollout(task, predictor, seed, replan_interval):
             if chunk is None or step % replan_interval == 0:
                 chunk = predictor(timestep.observation)
             action = chunk[step % replan_interval]
-            timestep = env.step(action)
+            try:
+                timestep = env.step(action)
+            except control.PhysicsError as error:
+                return {
+                    "seed": int(seed),
+                    "success": False,
+                    "physics_steps": step + 1,
+                    "failure_reason": "physics_error",
+                    "physics_error": str(error),
+                }
             maximum_reward = max(maximum_reward, int(timestep.reward or 0))
             if maximum_reward == env.task.max_reward:
                 return {"seed": int(seed), "success": True, "physics_steps": step + 1}
         return {"seed": int(seed), "success": False, "physics_steps": get_task_spec(task).episode_len}
     finally:
         env.close()
+
+
+def _write_json_atomic(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n")
+    temporary.replace(path)
 
 
 def main():
@@ -47,13 +65,40 @@ def main():
     parser.add_argument("--seed-base", type=int, default=2600000)
     parser.add_argument("--replan-interval", type=int, default=8)
     parser.add_argument("--speed-condition", type=int, choices=(0, 1), required=True)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume from the atomically written per-state partial report",
+    )
     args = parser.parse_args()
     task = normalize_task_name(args.task)
     predictor = RelativeChunkPredictor(args.checkpoint, args.speed_condition)
+    identity = {
+        "task": task,
+        "checkpoint": str(args.checkpoint),
+        "episodes": args.episodes,
+        "seed_base": args.seed_base,
+        "replan_interval": args.replan_interval,
+        "speed_condition": args.speed_condition,
+    }
+    partial_path = args.output.with_suffix(args.output.suffix + ".partial")
     rollouts = []
-    for index in range(args.episodes):
+    if args.resume and partial_path.exists():
+        partial = json.loads(partial_path.read_text())
+        if partial.get("identity") != identity:
+            raise RuntimeError("evaluation resume identity mismatch")
+        rollouts = partial["rollouts"]
+    elif partial_path.exists():
+        raise RuntimeError(
+            f"partial evaluation exists; pass --resume or remove it: {partial_path}"
+        )
+    for index in range(len(rollouts), args.episodes):
         rollouts.append(
             rollout(task, predictor, args.seed_base + index, args.replan_interval)
+        )
+        _write_json_atomic(
+            partial_path,
+            {"schema": "relative-imitation-eval-partial-v1", "identity": identity, "rollouts": rollouts},
         )
         print(json.dumps({"completed": index + 1, "successes": sum(item["success"] for item in rollouts)}), flush=True)
     successes = [item for item in rollouts if item["success"]]
@@ -70,8 +115,8 @@ def main():
         "clipping": predictor.clipping_metrics(),
         "rollouts": rollouts,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    _write_json_atomic(args.output, report)
+    partial_path.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

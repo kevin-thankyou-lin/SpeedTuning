@@ -11,6 +11,7 @@ set -euo pipefail
 : "${PYTHON:?}"
 : "${PREFIX_GENERATION:?}"
 : "${SUPERVISED_HORIZON:?}"
+ACT_DETERMINISTIC=${ACT_DETERMINISTIC:-0}
 
 BASE=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-20260821-v2/pick
 BASE_CHECKPOINT=$BASE/checkpoints/slow_150/act/best.pt
@@ -45,6 +46,10 @@ INITIAL_ARGS=()
 if [ "$INITIALIZE_FROM_BASE" = 1 ]; then
   INITIAL_ARGS=(--initial-checkpoint "$BASE_CHECKPOINT")
 fi
+DETERMINISTIC_ARGS=()
+if [ "$ACT_DETERMINISTIC" = 1 ]; then
+  DETERMINISTIC_ARGS=(--act-deterministic)
+fi
 (
   set +e
   "$PYTHON" -m scripts.train_relative_imitation \
@@ -54,6 +59,7 @@ fi
     --episode-start-probability "$START_PROBABILITY" \
     --normalization "$NORMALIZATION" \
     --supervised-horizon "$SUPERVISED_HORIZON" \
+    "${DETERMINISTIC_ARGS[@]}" \
     --checkpoint-every "$CHECKPOINT_EVERY" \
     "${INITIAL_ARGS[@]}" \
     2>&1 | tee "$ROOT/train.log"
@@ -97,6 +103,7 @@ evaluate_checkpoint "$ROOT/checkpoint/best.pt"
 
 export ROOT VARIANT START_PROBABILITY NORMALIZATION STEPS SOURCE_COMMIT
 export BASE_CHECKPOINT_SHA INITIALIZE_FROM_BASE SUPERVISED_HORIZON
+export ACT_DETERMINISTIC
 "$PYTHON" - <<'PY'
 import hashlib
 import json
@@ -132,6 +139,7 @@ summary = {
     "supervised_horizon": int(os.environ["SUPERVISED_HORIZON"]),
     "training_steps": int(os.environ["STEPS"]),
     "initialized_from_base": os.environ["INITIALIZE_FROM_BASE"] == "1",
+    "act_deterministic": os.environ["ACT_DETERMINISTIC"] == "1",
     "source_commit": os.environ["SOURCE_COMMIT"],
     "base_checkpoint_sha256": os.environ["BASE_CHECKPOINT_SHA"],
     "training_pose_seeds": list(range(4100001, 4100011)),

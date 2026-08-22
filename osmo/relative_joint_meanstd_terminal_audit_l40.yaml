@@ -12,7 +12,7 @@ workflow:
       platform: ovx-l40
       storage: 4Gi
   groups:
-    - name: audit
+    - name: verification
       tasks:
         - name: audit
           lead: true

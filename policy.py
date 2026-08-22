@@ -4,6 +4,14 @@ import torchvision.transforms as transforms
 
 from detr.main import build_ACT_model_and_optimizer, build_CNNMLP_model_and_optimizer
 
+
+def masked_l1_loss(target, prediction, is_pad):
+    """Average over valid action elements, independent of padded horizon."""
+
+    element_loss = F.l1_loss(target, prediction, reduction='none')
+    valid = (~is_pad).unsqueeze(-1).expand_as(element_loss)
+    return (element_loss * valid).sum() / valid.sum().clamp_min(1)
+
 class ACTPolicy(nn.Module):
     def __init__(self, args_override):
         super().__init__()
@@ -24,8 +32,7 @@ class ACTPolicy(nn.Module):
             a_hat, is_pad_hat, (mu, logvar) = self.model(qpos, image, env_state, actions, is_pad)
             total_kld, dim_wise_kld, mean_kld = kl_divergence(mu, logvar)
             loss_dict = dict()
-            all_l1 = F.l1_loss(actions, a_hat, reduction='none')
-            l1 = (all_l1 * ~is_pad.unsqueeze(-1)).mean()
+            l1 = masked_l1_loss(actions, a_hat, is_pad)
             loss_dict['l1'] = l1
             loss_dict['kl'] = total_kld[0]
             loss_dict['loss'] = loss_dict['l1'] + loss_dict['kl'] * self.kl_weight

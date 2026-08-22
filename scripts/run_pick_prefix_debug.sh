@@ -9,12 +9,13 @@ set -euo pipefail
 : "${INITIALIZE_FROM_BASE:?}"
 : "${SOURCE_COMMIT:?}"
 : "${PYTHON:?}"
+: "${PREFIX_GENERATION:?}"
 
 BASE=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-20260821-v2/pick
 BASE_CHECKPOINT=$BASE/checkpoints/slow_150/act/best.pt
 BASE_CHECKPOINT_SHA=cd984a8812ce5679ee3083cb5c0fb17ff92d29dc62e47b9e11b9d638a5ddd6ba
 DATASET=$BASE/datasets/slow_150/pick_and_place
-ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-pick-executed-prefix-20260822-v1/$VARIANT
+ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/$PREFIX_GENERATION/$VARIANT
 OUTPUT=/osmo/run/outputs/$VARIANT
 START_PROBABILITY=0.25
 SUPERVISED_HORIZON=8

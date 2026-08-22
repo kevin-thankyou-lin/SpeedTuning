@@ -34,6 +34,10 @@ learned = [
     "torch==2.5.1",
     "torchvision==0.20.1",
 ]
+imitation = [
+    "diffusers>=0.31,<0.34",
+    "h5py>=3.10,<4",
+]
 rl = ["torch==2.5.1"]
 test = ["pytest>=8,<9"]
 video = ["imageio>=2.31,<3", "imageio-ffmpeg>=0.4.9,<0.7"]
@@ -62,11 +66,14 @@ py-modules = [
     "act_integration",
     "chunked_policy",
     "constants",
+    "diffusion_unet",
     "ee_sim_env",
     "experiment_config",
+    "imitation_data",
     "policy",
     "policy_loader",
     "policy_speed_env",
+    "relative_imitation",
     "scripted_policy",
     "sim_env",
     "sim_tasks",

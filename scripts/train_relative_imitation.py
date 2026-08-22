@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 from pathlib import Path
 
@@ -12,6 +13,14 @@ import torch
 from torch.utils.data import DataLoader
 
 from relative_imitation import create_policy, prepare_datasets
+
+
+def _save_checkpoint(payload, path):
+    """Publish a complete checkpoint for concurrent online evaluation."""
+
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    torch.save(payload, temporary)
+    os.replace(temporary, path)
 
 
 def _mean_loss(model, loader, device, batches=10):
@@ -109,10 +118,10 @@ def main():
                 },
             }
             if args.checkpoint_every and step % args.checkpoint_every == 0:
-                torch.save(payload, args.output_dir / f"step-{step:05d}.pt")
+                _save_checkpoint(payload, args.output_dir / f"step-{step:05d}.pt")
             if value < best:
                 best = value
-                torch.save(payload, args.output_dir / "best.pt")
+                _save_checkpoint(payload, args.output_dir / "best.pt")
     (args.output_dir / "training_complete.json").write_text(
         json.dumps(
             {

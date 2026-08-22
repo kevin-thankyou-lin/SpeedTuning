@@ -1,8 +1,8 @@
 version: 2
 workflow:
-  name: speedtuning-relative-joint-act-diffusion-l40-20260821-v1
+  name: speedtuning-conditioned-relative-joint-l40-20260821-v2
   timeout:
-    exec_timeout: 12h
+    exec_timeout: 24h
     queue_timeout: 2h
   resources:
     default:
@@ -22,15 +22,16 @@ workflow:
           environment:
             TASK: pick
             RUNTIME_TASK: pick_and_place
-            EXPECTED_EPISODES: "100"
             EVAL_SEED_BASE: "3100000"
+            DATA_SEED_BASE: "4100000"
+            FAST_SCHEDULE_ARGS: "--fast-schedule 2,2,2,2 --fast-schedule 1.5,1.5,1.5,1.5 --fast-schedule 4,4,4,4"
           files: &run_file
             - path: /tmp/run.sh
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=b512569be587b0dbe04cb8c5eaf6b901de11f28c
-                EXPERIMENT=speedtuning-relative-joint-act-diffusion-20260821-v1
+                SOURCE_COMMIT=4c52bff679c883fd809d76f2856fd975f7a42fbf
+                EXPERIMENT=speedtuning-conditioned-relative-joint-20260821-v2
                 PERSIST_ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/$EXPERIMENT
                 RUN=$PERSIST_ROOT/$TASK
                 OUTPUT=/osmo/run/outputs/$TASK
@@ -56,25 +57,36 @@ workflow:
                 PYTHON=$CODE/.venv/bin/python
                 "$PYTHON" -m pytest -q | tee "$RUN/pytest.log"
 
-                "$PYTHON" -m scripts.replay_relative_imitation_dataset \
-                  --manifest experiments/relative_joint_rollouts_v1/manifest.json \
-                  --output-root "$RUN/dataset" --task "$TASK" \
-                  2>&1 | tee "$RUN/replay.log"
-                count=$(find "$RUN/dataset/$TASK" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)
-                test "$count" -eq "$EXPECTED_EPISODES"
+                # shellcheck disable=SC2086
+                "$PYTHON" -m scripts.collect_conditioned_relative_datasets \
+                  --task "$RUNTIME_TASK" --output-root "$RUN/datasets" \
+                  --seed-base "$DATA_SEED_BASE" $FAST_SCHEDULE_ARGS \
+                  2>&1 | tee "$RUN/collection.log"
+                for DATASET in slow_150 mixed_100slow_50fast; do
+                  count=$(find "$RUN/datasets/$DATASET/$RUNTIME_TASK" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)
+                  test "$count" -eq 150
+                done
 
-                for KIND in act diffusion; do
-                  "$PYTHON" -m scripts.train_relative_imitation \
-                    --kind "$KIND" --dataset-dir "$RUN/dataset/$TASK" \
-                    --output-dir "$RUN/checkpoints/$KIND" --steps 20000 \
-                    --chunk-size 48 --batch-size 16 --seed 0 \
-                    2>&1 | tee "$RUN/train-$KIND.log"
-                  test -s "$RUN/checkpoints/$KIND/best.pt"
-                  "$PYTHON" -m scripts.evaluate_relative_imitation \
-                    --task "$RUNTIME_TASK" --checkpoint "$RUN/checkpoints/$KIND/best.pt" \
-                    --output "$RUN/eval-$KIND.json" --episodes 100 \
-                    --seed-base "$EVAL_SEED_BASE" --replan-interval 8 \
-                    2>&1 | tee "$RUN/eval-$KIND.log"
+                for DATASET in slow_150 mixed_100slow_50fast; do
+                  for KIND in act diffusion; do
+                    MODEL=$RUN/checkpoints/$DATASET/$KIND
+                    "$PYTHON" -m scripts.train_relative_imitation \
+                      --kind "$KIND" --dataset-dir "$RUN/datasets/$DATASET/$RUNTIME_TASK" \
+                      --output-dir "$MODEL" --steps 20000 \
+                      --chunk-size 48 --batch-size 16 --seed 0 \
+                      2>&1 | tee "$RUN/train-$DATASET-$KIND.log"
+                    test -s "$MODEL/best.pt"
+                    MODES=0
+                    test "$DATASET" = mixed_100slow_50fast && MODES="0 1"
+                    for MODE in $MODES; do
+                      "$PYTHON" -m scripts.evaluate_relative_imitation \
+                        --task "$RUNTIME_TASK" --checkpoint "$MODEL/best.pt" \
+                        --output "$RUN/eval-$DATASET-$KIND-mode$MODE.json" --episodes 100 \
+                        --seed-base "$EVAL_SEED_BASE" --replan-interval 8 \
+                        --speed-condition "$MODE" \
+                        2>&1 | tee "$RUN/eval-$DATASET-$KIND-mode$MODE.log"
+                    done
+                  done
                 done
 
                 export RUN TASK SOURCE_COMMIT
@@ -85,13 +97,20 @@ workflow:
                 result = {
                     "task": os.environ["TASK"],
                     "source_commit": os.environ["SOURCE_COMMIT"],
+                    "datasets": {
+                        "slow_150": {"slow": 150, "fast": 0},
+                        "mixed_100slow_50fast": {"slow": 100, "fast": 50},
+                    },
+                    "condition": "append 0=uniform native 1x or 1=any non-native schedule to normalized 14D qpos; action remains 14D",
                     "relative_action": "target_qpos[t+k] - observations/qpos[t]",
                     "normalization": "train-only per chunk step and joint",
-                    "act": json.loads((run / "eval-act.json").read_text()),
-                    "diffusion": json.loads((run / "eval-diffusion.json").read_text()),
+                    "evaluations": {
+                        path.stem.removeprefix("eval-"): json.loads(path.read_text())
+                        for path in sorted(run.glob("eval-*.json"))
+                    },
                 }
                 (run / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
-                for path in sorted(run.glob("checkpoints/*/best.pt")):
+                for path in sorted(run.glob("checkpoints/*/*/best.pt")):
                     digest = hashlib.sha256(path.read_bytes()).hexdigest()
                     with (run / "SHA256SUMS").open("a") as stream:
                         stream.write(f"{digest}  {path.relative_to(run)}\n")
@@ -107,8 +126,9 @@ workflow:
           environment:
             TASK: tea
             RUNTIME_TASK: tea_bag
-            EXPECTED_EPISODES: "100"
             EVAL_SEED_BASE: "3200000"
+            DATA_SEED_BASE: "4200000"
+            FAST_SCHEDULE_ARGS: "--fast-schedule 2.5,2.5,1.5,1.5 --fast-schedule 2,2,2,2 --fast-schedule 1.5,1.5,1.5,1.5"
           files: *run_file
         - name: insertion
           image: *image
@@ -117,6 +137,7 @@ workflow:
           environment:
             TASK: insertion
             RUNTIME_TASK: insertion
-            EXPECTED_EPISODES: "98"
             EVAL_SEED_BASE: "3300000"
+            DATA_SEED_BASE: "4300000"
+            FAST_SCHEDULE_ARGS: "--fast-schedule 1.5,2,2,2 --fast-schedule 1.5,1.5,1.5,1.5 --fast-schedule 1,2.5,1.5,1"
           files: *run_file

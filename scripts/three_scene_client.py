@@ -45,20 +45,20 @@ def main() -> int:
     commands.add_parser("info")
     probe = commands.add_parser("probe")
     probe.add_argument("schedule")
-    screen = commands.add_parser("screen")
-    screen.add_argument("schedule_hash")
-    refine = commands.add_parser("refine")
-    refine.add_argument("schedule")
     backoff = commands.add_parser("backoff")
     backoff.add_argument("schedule_hash")
+    backoff.add_argument("phase")
+    backoff.add_argument("evidence")
     rank = commands.add_parser("rank")
     rank.add_argument("schedule_hashes", nargs="+")
     args = parser.parse_args()
     payload = {"command": args.command}
-    if args.command in {"probe", "refine"}:
+    if args.command == "probe":
         payload["schedule"] = parse_schedule(args.schedule)
-    elif args.command in {"screen", "backoff"}:
+    elif args.command == "backoff":
         payload["schedule_hash"] = args.schedule_hash
+        payload["phase"] = args.phase
+        payload["evidence"] = args.evidence
     elif args.command == "rank":
         payload["schedule_hashes"] = args.schedule_hashes
     print(json.dumps(request(args.api, payload), indent=2, sort_keys=True))

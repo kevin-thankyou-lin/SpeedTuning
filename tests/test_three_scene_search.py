@@ -46,24 +46,25 @@ def server(tmp_path, monkeypatch):
 
 def test_three_scene_rank_uses_measured_shared_bank(server):
     base = server.probe([3, 1, 1, 1])
-    assert server.screen(base["schedule_hash"])["discovery_successes"] == 3
-    ladder = server.backoff(base["schedule_hash"])
-    finalists = [value["schedule_hash"] for value in ladder["variants"]]
+    assert base["discovery_successes"] == 3
+    ladder = server.backoff(
+        base["schedule_hash"], "pre_grasp", "approach overshoots on the three previews"
+    )
+    finalists = [base["schedule_hash"], ladder["variants"][0]["schedule_hash"]]
 
     result = server.rank(finalists)
 
     assert result["budget_used"] == 32
     assert result["accelerated_qualified"]
-    assert result["qualified_schedule"] == [2.5, 1.0, 1.0, 1.0]
-    assert [value["successes"] for value in result["finalists"]] == [10, 9]
+    assert result["qualified_schedule"] == [3.0, 1.0, 1.0, 1.0]
+    assert [value["successes"] for value in result["finalists"]] == [10, 10]
     selection = json.loads((server.root / "public" / "SELECTION.json").read_text())
-    assert selection["deployment_schedule"] == [2.5, 1.0, 1.0, 1.0]
+    assert selection["deployment_schedule"] == [3.0, 1.0, 1.0, 1.0]
     assert server.rank(finalists)["cache_hit"]
 
 
 def test_native_baseline_is_external_fallback_not_finalist(server):
     candidate = server.probe([2, 1, 1, 1])
-    server.screen(candidate["schedule_hash"])
     native_hash = module.schedule_hash((1, 1, 1, 1))
 
     with pytest.raises(ValueError, match="must be accelerated"):
@@ -72,44 +73,48 @@ def test_native_baseline_is_external_fallback_not_finalist(server):
 
 def test_backoff_ladder_uses_protected_reserve_and_creates_accelerated_finalists(server):
     base = server.probe([3.5, 2.5, 4, 2])
-    server.screen(base["schedule_hash"])
     server.state["episodes_used"] = 24
     server._persist()
 
     with pytest.raises(ValueError, match="use backoff"):
         server.probe([4, 3, 4, 2.5])
 
-    result = server.backoff(base["schedule_hash"])
+    result = server.backoff(
+        base["schedule_hash"], "grasp_lift", "grasp is visibly unsettled before lift"
+    )
 
     assert [value["schedule"] for value in result["variants"]] == [
-        [3.0, 2.0, 3.5, 1.5],
-        [2.5, 1.5, 3.0, 1.0],
+        [3.5, 2.0, 4.0, 2.0],
+        [3.5, 1.5, 4.0, 2.0],
     ]
+    assert result["attributed_phase"] == "grasp_lift"
+    assert result["causal_evidence"] == "grasp is visibly unsettled before lift"
     assert all(value["discovery_successes"] == 3 for value in result["variants"])
     assert len(result["accelerated_finalist_hashes"]) == 3
     assert server.state["episodes_used"] == 30
-    cached = server.backoff(base["schedule_hash"])
+    cached = server.backoff(
+        base["schedule_hash"], "grasp_lift", "grasp is visibly unsettled before lift"
+    )
     assert cached["cache_hit"]
     assert server.state["episodes_used"] == 30
 
-    ranked = server.rank([value["schedule_hash"] for value in result["variants"]])
+    ranked = server.rank([base["schedule_hash"], result["variants"][0]["schedule_hash"]])
     assert ranked["budget_used"] == 50
-    assert ranked["qualified_schedule"] == [3.0, 2.0, 3.5, 1.5]
+    assert ranked["qualified_schedule"] == [3.5, 2.0, 4.0, 2.0]
 
 
 def test_rank_requires_mandatory_ladder(server):
     first = server.probe([2.5, 1, 1, 1])
     second = server.probe([3, 1, 1, 1])
-    server.screen(first["schedule_hash"])
-    server.screen(second["schedule_hash"])
     with pytest.raises(ValueError, match="mandatory backoff"):
         server.rank([first["schedule_hash"], second["schedule_hash"]])
 
 
 def test_minimal_acceleration_can_rank_as_sole_degenerate_finalist(server):
     base = server.probe([1, 1, 1.5, 1])
-    server.screen(base["schedule_hash"])
-    ladder = server.backoff(base["schedule_hash"])
+    ladder = server.backoff(
+        base["schedule_hash"], "transport", "transport is the only accelerated phase"
+    )
 
     assert ladder["variants"] == []
     ranked = server.rank([base["schedule_hash"]])
@@ -123,8 +128,7 @@ def test_subthreshold_ranking_keeps_native_deployment_and_accelerated_benchmark(
     server, monkeypatch
 ):
     base = server.probe([3, 1, 1, 1])
-    server.screen(base["schedule_hash"])
-    ladder = server.backoff(base["schedule_hash"])
+    ladder = server.backoff(base["schedule_hash"], "pre_grasp", "approach has least margin")
     original = module.run_phase_schedule
 
     def unreliable(*args, **kwargs):
@@ -136,32 +140,44 @@ def test_subthreshold_ranking_keeps_native_deployment_and_accelerated_benchmark(
         return result
 
     monkeypatch.setattr(module, "run_phase_schedule", unreliable)
-    result = server.rank([value["schedule_hash"] for value in ladder["variants"]])
+    result = server.rank([base["schedule_hash"], ladder["variants"][0]["schedule_hash"]])
 
     assert not result["accelerated_qualified"]
     assert result["qualified_schedule"] is None
     assert result["deployment_schedule"] == [1.0, 1.0, 1.0, 1.0]
-    assert result["benchmark_schedule"] == [2.5, 1.0, 1.0, 1.0]
+    assert result["benchmark_schedule"] == [3.0, 1.0, 1.0, 1.0]
     selection = json.loads((server.root / "public" / "SELECTION.json").read_text())
     assert selection["schedule"] == result["benchmark_schedule"]
     assert selection["deployment_schedule"] == [1.0, 1.0, 1.0, 1.0]
 
 
-def test_screen_is_fail_fast_and_ineligible_candidate_cannot_rank(server):
-    failing = server.probe([2, 1, 1, 1])
-    # Make scene B fail for this schedule.
-    server.discovery_seeds[1] = 201
-    screened = server.screen(failing["schedule_hash"])
-    assert screened["discovery_completed"] == 2
-    assert screened["discovery_successes"] == 1
-    with pytest.raises(ValueError, match="three safe discovery successes"):
-        server.rank([failing["schedule_hash"], "missing"])
+def test_probe_always_completes_all_three_distinct_poses(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "sample_object_pose", lambda task, seed: (float(seed),) * 7)
+    monkeypatch.setattr(module, "run_phase_schedule", fake_rollout)
+    custom = module.ThreeSceneServer(
+        tmp_path, "pick_and_place", [101, 201, 103], list(range(300, 310)), 50, None
+    )
+
+    failing = custom.probe([2, 1, 1, 1])
+
+    assert failing["discovery_completed"] == 3
+    assert failing["discovery_successes"] == 2
+    assert custom.state["episodes_used"] == 6
 
 
-def test_refinement_pool_is_bounded(server):
-    for speed in (1.5, 2.0, 2.5):
-        server.refine([speed, 1, 1, 1])
-    assert server.state["refinement_episodes"] == 8
+def test_probe_pool_is_five_complete_three_pose_candidates(server):
+    for speed in (1.5, 2.0, 2.5, 3.0, 3.5):
+        result = server.probe([speed, 1, 1, 1])
+        assert result["discovery_completed"] == 3
+    assert server.state["episodes_used"] == 18
+    with pytest.raises(ValueError, match="five-schedule"):
+        server.probe([4, 1, 1, 1])
+
+
+def test_backoff_rejects_native_attributed_phase(server):
+    base = server.probe([3, 1, 2, 1])
+    with pytest.raises(ValueError, match="already at native"):
+        server.backoff(base["schedule_hash"], "grasp_lift", "grasp looks risky")
 
 
 class DummyEnv:

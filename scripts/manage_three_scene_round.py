@@ -53,7 +53,7 @@ def wait_paths(paths, processes, label):
 def agent_command(agent_root: Path, runner_root: Path) -> list[str]:
     prompt = (
         "Read AGENTS.md and TASK_CONTRACT.md completely. Execute the full staged three-scene "
-        "search using only this lane's runner results and MP4s. Run the mandatory backoff ladder, "
+        "search using only this lane's runner results and MP4s. Run the phase-specific causal ladder, "
         "rank exactly the runner-designated accelerated finalist set, preserve the distinction "
         "between deployment and descriptive benchmark schedules, and write terminal artifacts."
     )

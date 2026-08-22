@@ -1,6 +1,6 @@
 version: 2
 workflow:
-  name: speedtuning-pick-executed-prefix-debug-20260822-v2
+  name: speedtuning-pick-executed-prefix-debug-20260822-v3
   timeout:
     exec_timeout: 10h
     queue_timeout: 2h
@@ -30,8 +30,8 @@ workflow:
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=3deb07747736edf2860c99f2e340c0b52ed46eea
-                PREFIX_GENERATION=speedtuning-pick-executed-prefix-20260822-v2
+                SOURCE_COMMIT=f2a7f6b60bad52ef8207f9c7db12d8ffa5c79240
+                PREFIX_GENERATION=speedtuning-pick-executed-prefix-20260822-v3
                 SUPERVISED_HORIZON=8
                 CODE=/osmo/run/workspace/SpeedTuning-$VARIANT
                 export MUJOCO_GL=egl

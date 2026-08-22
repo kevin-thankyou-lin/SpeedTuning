@@ -12,6 +12,7 @@ set -euo pipefail
 : "${PREFIX_GENERATION:?}"
 : "${SUPERVISED_HORIZON:?}"
 ACT_DETERMINISTIC=${ACT_DETERMINISTIC:-0}
+CHUNK_SIZE=${CHUNK_SIZE:-48}
 
 BASE=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-20260821-v2/pick
 BASE_CHECKPOINT=$BASE/checkpoints/slow_150/act/best.pt
@@ -54,7 +55,7 @@ fi
   set +e
   "$PYTHON" -m scripts.train_relative_imitation \
     --kind act --dataset-dir "$DATASET" --output-dir "$ROOT/checkpoint" \
-    --steps "$STEPS" --chunk-size 48 --batch-size 16 \
+    --steps "$STEPS" --chunk-size "$CHUNK_SIZE" --batch-size 16 \
     --lr "$LEARNING_RATE" --seed 0 \
     --episode-start-probability "$START_PROBABILITY" \
     --normalization "$NORMALIZATION" \
@@ -104,6 +105,7 @@ evaluate_checkpoint "$ROOT/checkpoint/best.pt"
 export ROOT VARIANT START_PROBABILITY NORMALIZATION STEPS SOURCE_COMMIT
 export BASE_CHECKPOINT_SHA INITIALIZE_FROM_BASE SUPERVISED_HORIZON
 export ACT_DETERMINISTIC
+export CHUNK_SIZE
 "$PYTHON" - <<'PY'
 import hashlib
 import json
@@ -137,6 +139,7 @@ summary = {
     "normalization": os.environ["NORMALIZATION"],
     "episode_start_probability": float(os.environ["START_PROBABILITY"]),
     "supervised_horizon": int(os.environ["SUPERVISED_HORIZON"]),
+    "chunk_size": int(os.environ["CHUNK_SIZE"]),
     "training_steps": int(os.environ["STEPS"]),
     "initialized_from_base": os.environ["INITIALIZE_FROM_BASE"] == "1",
     "act_deterministic": os.environ["ACT_DETERMINISTIC"] == "1",

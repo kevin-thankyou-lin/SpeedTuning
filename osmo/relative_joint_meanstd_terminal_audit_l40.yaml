@@ -1,0 +1,142 @@
+version: 2
+workflow:
+  name: speedtuning-conditioned-relative-joint-meanstd-terminal-audit-20260822-v1
+  timeout:
+    exec_timeout: 2h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 2
+      gpu: 0
+      memory: 8Gi
+      platform: ovx-l40
+      storage: 4Gi
+  groups:
+    - name: audit
+      tasks:
+        - name: audit
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                BASE=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation
+                TRAIN=$BASE/speedtuning-conditioned-relative-joint-meanstd-20260822-v1
+                MONITOR=$BASE/speedtuning-conditioned-relative-joint-meanstd-online-eval-20260822-v1
+                ROOT=$BASE/speedtuning-conditioned-relative-joint-meanstd-terminal-audit-20260822-v1
+                OUTPUT=/osmo/run/outputs/audit
+                test ! -e "$ROOT"
+                mkdir -p "$ROOT" "$OUTPUT"
+                export TRAIN MONITOR ROOT
+                python - <<'PY'
+                import hashlib
+                import json
+                import os
+                from pathlib import Path
+
+                train = Path(os.environ["TRAIN"])
+                monitor = Path(os.environ["MONITOR"])
+                root = Path(os.environ["ROOT"])
+                required_evaluations = (
+                    "eval-slow_150-act-mode0.json",
+                    "eval-slow_150-diffusion-mode0.json",
+                    "eval-mixed_100slow_50fast-act-mode0.json",
+                    "eval-mixed_100slow_50fast-act-mode1.json",
+                    "eval-mixed_100slow_50fast-diffusion-mode0.json",
+                    "eval-mixed_100slow_50fast-diffusion-mode1.json",
+                )
+                model_conditions = {
+                    "slow_150/act": (0,),
+                    "slow_150/diffusion": (0,),
+                    "mixed_100slow_50fast/act": (0, 1),
+                    "mixed_100slow_50fast/diffusion": (0, 1),
+                }
+                expected_recovery_receipts = {
+                    "pick": (),
+                    "tea": (
+                        train / "tea/tea-recovery-v1-receipt.json",
+                        monitor / "tea/tea-online-eval-recovery-v1-receipt.json",
+                    ),
+                    "insertion": (
+                        train / "insertion/insertion-final-eval-recovery-v1-receipt.json",
+                        monitor / "insertion/insertion-online-eval-recovery-v1-receipt.json",
+                    ),
+                }
+                audit = {
+                    "schema": "conditioned-relative-joint-meanstd-terminal-audit-v1",
+                    "tasks": {},
+                }
+                for task in ("pick", "tea", "insertion"):
+                    run = train / task
+                    monitored = monitor / task
+                    assert (run / "completed_at.txt").is_file(), task
+                    assert (run / "summary.json").is_file(), task
+                    assert (run / "SHA256SUMS").is_file(), task
+                    assert not list(run.glob("*.partial")), task
+                    for receipt in expected_recovery_receipts[task]:
+                        assert receipt.is_file(), receipt
+
+                    final_reports = {}
+                    for name in required_evaluations:
+                        path = run / name
+                        assert path.is_file(), path
+                        report = json.loads(path.read_text())
+                        assert report["episodes"] == 100, path
+                        assert len(report["rollouts"]) == 100, path
+                        assert report["successes"] == sum(
+                            item["success"] for item in report["rollouts"]
+                        ), path
+                        final_reports[name.removeprefix("eval-").removesuffix(".json")] = {
+                            "successes": report["successes"],
+                            "episodes": report["episodes"],
+                            "successful_mean_steps": report["successful_mean_steps"],
+                        }
+
+                    for line in (run / "SHA256SUMS").read_text().splitlines():
+                        expected, relative = line.split("  ", 1)
+                        path = run / relative
+                        assert path.is_file(), path
+                        assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, path
+
+                    progress = json.loads((monitored / "progress.json").read_text())
+                    assert progress.get("terminal") is True, task
+                    checkpoint_reports = {}
+                    for model, conditions in model_conditions.items():
+                        state = progress["models"][model]
+                        assert set(state["threshold_crossings"]) == {
+                            "5000", "10000", "15000", "20000"
+                        }, (task, model)
+                        assert state["final_best_step"] is not None, (task, model)
+                        records = []
+                        for actual_step in state["evaluated_actual_steps"]:
+                            for condition in conditions:
+                                path = (
+                                    monitored / "results" / model /
+                                    f"best-step-{actual_step:05d}-mode{condition}.json"
+                                )
+                                assert path.is_file(), path
+                                report = json.loads(path.read_text())
+                                assert report["episodes"] == 10, path
+                                assert len(report["rollouts"]) == 10, path
+                                records.append({
+                                    "checkpoint_step": actual_step,
+                                    "speed_condition": condition,
+                                    "successes": report["successes"],
+                                    "episodes": 10,
+                                })
+                        checkpoint_reports[model] = records
+                    audit["tasks"][task] = {
+                        "final_reports": final_reports,
+                        "checkpoint_reports": checkpoint_reports,
+                        "completed_at": (run / "completed_at.txt").read_text().strip(),
+                    }
+
+                destination = root / "audit.json"
+                destination.write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n")
+                print(json.dumps(audit, indent=2, sort_keys=True))
+                PY
+                cp "$ROOT/audit.json" "$OUTPUT"/
+                echo "RELATIVE_JOINT_MEANSTD_TERMINAL_AUDIT_COMPLETE root=$ROOT"

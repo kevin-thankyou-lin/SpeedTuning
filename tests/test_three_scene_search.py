@@ -106,6 +106,19 @@ def test_rank_requires_mandatory_ladder(server):
         server.rank([first["schedule_hash"], second["schedule_hash"]])
 
 
+def test_minimal_acceleration_can_rank_as_sole_degenerate_finalist(server):
+    base = server.probe([1, 1, 1.5, 1])
+    server.screen(base["schedule_hash"])
+    ladder = server.backoff(base["schedule_hash"])
+
+    assert ladder["variants"] == []
+    ranked = server.rank([base["schedule_hash"]])
+
+    assert ranked["budget_used"] == 16
+    assert ranked["accelerated_qualified"]
+    assert ranked["qualified_schedule"] == [1.0, 1.0, 1.5, 1.0]
+
+
 def test_subthreshold_ranking_keeps_native_deployment_and_accelerated_benchmark(
     server, monkeypatch
 ):

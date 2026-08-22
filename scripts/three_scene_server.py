@@ -419,7 +419,9 @@ class ThreeSceneServer:
             return safe_backoffs[:2]
         if len(safe_backoffs) == 1:
             return [base, safe_backoffs[0]]
-        raise ValueError("the backoff ladder did not produce a second accelerated finalist")
+        if not self._backoff_schedules(self.state["candidates"][base]["schedule"]):
+            return [base]
+        raise ValueError("the backoff ladder did not produce a viable accelerated finalist")
 
     def _rank_summary(self, identifier: str, rollouts: list[dict]) -> dict:
         successful_rollouts = [value for value in rollouts if successful(value)]
@@ -450,8 +452,8 @@ class ThreeSceneServer:
     def rank(self, identifiers: list[str]) -> dict:
         if self.state["ranking"] is not None:
             return {**self.state["ranking"], "cache_hit": True}
-        if len(identifiers) != 2 or len(set(identifiers)) != 2:
-            raise ValueError("rank requires exactly two distinct schedule hashes")
+        if len(identifiers) not in (1, 2) or len(set(identifiers)) != len(identifiers):
+            raise ValueError("rank requires one or two distinct designated schedule hashes")
         for identifier in identifiers:
             candidate = self.state["candidates"].get(identifier)
             if candidate is None or not self._is_accelerated(candidate["schedule"]):
@@ -463,7 +465,7 @@ class ThreeSceneServer:
             raise ValueError("rank must use the two runner-designated reliability-ladder finalists")
         if self.state["episodes_used"] > DISCOVERY_LIMIT:
             raise ValueError("ranking reserve was violated")
-        if self.state["episodes_used"] + 2 * RANKING_STATES > self.budget:
+        if self.state["episodes_used"] + len(identifiers) * RANKING_STATES > self.budget:
             raise ValueError("insufficient reserved budget for finalist ranking")
         summaries = []
         for identifier in identifiers:

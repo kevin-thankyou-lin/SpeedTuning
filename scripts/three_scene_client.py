@@ -52,7 +52,7 @@ def main() -> int:
     backoff = commands.add_parser("backoff")
     backoff.add_argument("schedule_hash")
     rank = commands.add_parser("rank")
-    rank.add_argument("schedule_hashes", nargs=2)
+    rank.add_argument("schedule_hashes", nargs="+")
     args = parser.parse_args()
     payload = {"command": args.command}
     if args.command in {"probe", "refine"}:

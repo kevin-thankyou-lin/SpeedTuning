@@ -180,6 +180,45 @@ def test_backoff_rejects_native_attributed_phase(server):
         server.backoff(base["schedule_hash"], "grasp_lift", "grasp looks risky")
 
 
+def test_imperfect_three_pose_base_can_enter_causal_ladder(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "sample_object_pose", lambda task, seed: (float(seed),) * 7)
+    monkeypatch.setattr(module, "run_phase_schedule", fake_rollout)
+    custom = module.ThreeSceneServer(
+        tmp_path, "pick_and_place", [101, 201, 103], list(range(300, 310)), 50, None
+    )
+    base = custom.probe([2, 1, 1, 1])
+    assert base["discovery_successes"] == 2
+    assert custom.info()["preferred_backoff_base_hash"] == base["schedule_hash"]
+
+    ladder = custom.backoff(
+        base["schedule_hash"], "pre_grasp", "scene B overshoots during accelerated approach"
+    )
+
+    assert ladder["variants"][0]["schedule"] == [1.5, 1.0, 1.0, 1.0]
+    assert ladder["variants"][0]["discovery_successes"] == 3
+    required = custom._required_ranking_hashes()
+    assert required == [base["schedule_hash"], ladder["variants"][0]["schedule_hash"]]
+
+
+def test_imperfect_base_ranks_alone_when_causal_backoffs_are_not_safe(server, monkeypatch):
+    original = module.run_phase_schedule
+
+    def always_fails(*args, **kwargs):
+        result = original(*args, **kwargs)
+        result["success"] = False
+        result["raw_task_success"] = False
+        return result
+
+    monkeypatch.setattr(module, "run_phase_schedule", always_fails)
+    base = server.probe([3, 1, 1, 1])
+    ladder = server.backoff(base["schedule_hash"], "pre_grasp", "all poses miss the approach")
+
+    assert all(value["discovery_successes"] == 0 for value in ladder["variants"])
+    ranked = server.rank([base["schedule_hash"]])
+    assert not ranked["accelerated_qualified"]
+    assert ranked["deployment_schedule"] == [1.0, 1.0, 1.0, 1.0]
+
+
 class DummyEnv:
     action_space = 2
     speed_values = (1.0, 2.0)

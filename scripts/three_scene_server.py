@@ -229,6 +229,27 @@ class ThreeSceneServer:
             ),
         )
 
+    def _preferred_backoff_base(self) -> str | None:
+        safe = self._accelerated_finalists()
+        if safe:
+            return self._fastest_accelerated_finalist()
+        completed = [
+            identifier
+            for identifier, candidate in self.state["candidates"].items()
+            if self._is_accelerated(candidate["schedule"])
+            and all(value is not None for value in candidate["discovery"])
+        ]
+        if not completed:
+            return None
+
+        def key(identifier: str):
+            rollouts = self.state["candidates"][identifier]["discovery"]
+            successes = [value for value in rollouts if successful(value)]
+            speed_steps = successes or rollouts
+            return (-len(successes), statistics.fmean(value["physics_steps"] for value in speed_steps), identifier)
+
+        return min(completed, key=key)
+
     def _ensure_discovery_budget(self, cost: int, *, use_backoff_reserve: bool = False) -> None:
         if self.state["ranking"] is not None:
             raise ValueError("ranking is already frozen")
@@ -273,6 +294,7 @@ class ThreeSceneServer:
             },
             "ranking": self.state["ranking"],
             "accelerated_finalist_hashes": self._accelerated_finalists(),
+            "preferred_backoff_base_hash": self._preferred_backoff_base(),
             "ladder_base_hash": self.state["ladder_base_hash"],
             "ladder_candidate_hashes": self.state["ladder_candidate_hashes"],
             "ladder_phase": self.state["ladder_phase"],
@@ -325,8 +347,8 @@ class ThreeSceneServer:
         candidate = self.state["candidates"].get(identifier)
         if candidate is None or not self._is_accelerated(candidate["schedule"]):
             raise ValueError("backoff requires an accelerated candidate hash")
-        if not self._safe_three(candidate):
-            raise ValueError("backoff requires a safe 3/3 accelerated candidate")
+        if not all(value is not None for value in candidate["discovery"]):
+            raise ValueError("backoff requires three completed discovery poses")
         phase = str(phase)
         evidence = str(evidence).strip()
         if phase not in PHASES:
@@ -335,8 +357,8 @@ class ThreeSceneServer:
             raise ValueError("backoff requires concise causal evidence")
         schedules = self._backoff_schedules(candidate["schedule"], phase)
         existing = self.state["ladder_base_hash"]
-        if existing is None and self._fastest_accelerated_finalist() != identifier:
-            raise ValueError("backoff must use the fastest safe accelerated 3/3 candidate")
+        if existing is None and self._preferred_backoff_base() != identifier:
+            raise ValueError("backoff must use the runner-designated preferred completed base")
         if existing is not None and existing != identifier:
             raise ValueError("the one permitted backoff ladder is already frozen")
         if existing is not None and (
@@ -426,8 +448,8 @@ class ThreeSceneServer:
             candidate = self.state["candidates"].get(identifier)
             if candidate is None or not self._is_accelerated(candidate["schedule"]):
                 raise ValueError("each finalist must be accelerated; native is an external fallback")
-            if not self._safe_three(candidate):
-                raise ValueError("each finalist must have three safe discovery successes")
+            if not all(value is not None for value in candidate["discovery"]):
+                raise ValueError("each finalist must have three completed discovery poses")
         required = self._required_ranking_hashes()
         if set(identifiers) != set(required):
             raise ValueError("rank must use the runner-designated base and causal-backoff finalist")

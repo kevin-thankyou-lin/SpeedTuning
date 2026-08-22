@@ -51,6 +51,11 @@ def main():
     parser.add_argument(
         "--normalization", choices=("q01_q99", "mean_std"), default="q01_q99"
     )
+    parser.add_argument(
+        "--supervised-horizon",
+        type=int,
+        help="Only charge action loss through this executed prefix of each chunk.",
+    )
     parser.add_argument("--initial-checkpoint", type=Path)
     parser.add_argument("--checkpoint-every", type=int, default=0)
     args = parser.parse_args()
@@ -65,6 +70,7 @@ def main():
         args.seed,
         args.episode_start_probability,
         args.normalization,
+        args.supervised_horizon,
     )
     train_loader = DataLoader(
         train, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True
@@ -110,6 +116,9 @@ def main():
                 "training": {
                     "episode_start_probability": args.episode_start_probability,
                     "normalization": args.normalization,
+                    "supervised_horizon": (
+                        args.supervised_horizon or args.chunk_size
+                    ),
                     "initial_checkpoint": (
                         str(args.initial_checkpoint)
                         if args.initial_checkpoint is not None
@@ -130,6 +139,7 @@ def main():
                 "best_validation_loss": best,
                 "episode_start_probability": args.episode_start_probability,
                 "normalization": args.normalization,
+                "supervised_horizon": args.supervised_horizon or args.chunk_size,
                 "initial_checkpoint": (
                     str(args.initial_checkpoint)
                     if args.initial_checkpoint is not None

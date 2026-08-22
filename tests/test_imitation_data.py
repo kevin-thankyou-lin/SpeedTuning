@@ -11,6 +11,7 @@ from imitation_data import (
     robust_normalize,
     speed_condition_from_schedule,
 )
+from relative_imitation import RelativeJointDataset
 from relative_imitation import RelativeJointDataset, split_episodes
 
 
@@ -61,6 +62,34 @@ def test_mean_std_normalization_is_unclipped_and_round_trips(tmp_path):
     normalized = normalize_delta(value, stats)
     assert float(normalized.max()) >= 4.99
     np.testing.assert_allclose(denormalize_delta(normalized, stats), value)
+
+
+def test_supervised_horizon_masks_unexecuted_chunk_suffix(tmp_path):
+    path = tmp_path / "episode_0.hdf5"
+    qpos = np.zeros((12, 14), dtype=np.float32)
+    target = np.arange(12, dtype=np.float32)[:, None] * np.ones((1, 14))
+    with h5py.File(path, "w") as root:
+        root.attrs["speed_condition"] = 0
+        observations = root.create_group("observations")
+        observations.create_dataset("qpos", data=qpos)
+        observations.create_group("images").create_dataset(
+            "angle", data=np.zeros((12, 8, 8, 3), dtype=np.uint8)
+        )
+        root.create_dataset("target_qpos", data=target)
+    stats = {
+        "qpos_low": np.full(14, -1, dtype=np.float32),
+        "qpos_high": np.full(14, 1, dtype=np.float32),
+        "delta_low": np.full((12, 14), -20, dtype=np.float32),
+        "delta_high": np.full((12, 14), 20, dtype=np.float32),
+    }
+    dataset = RelativeJointDataset(
+        [path], stats, chunk_size=12, episode_start_probability=1.0,
+        supervised_horizon=8,
+    )
+    _, _, _, is_pad = dataset[0]
+    np.testing.assert_array_equal(
+        is_pad.numpy(), np.array([False] * 8 + [True] * 4)
+    )
 
 
 def test_q01_q99_scaling_clips_and_round_trips_inside_bounds():

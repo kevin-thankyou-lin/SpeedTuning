@@ -26,13 +26,23 @@ from imitation_data import (
 
 class RelativeJointDataset(Dataset):
     def __init__(
-        self, paths, stats, chunk_size, episode_start_probability=0.0
+        self,
+        paths,
+        stats,
+        chunk_size,
+        episode_start_probability=0.0,
+        supervised_horizon=None,
     ):
         self.paths = tuple(map(Path, paths))
         self.chunk_size = int(chunk_size)
         self.episode_start_probability = float(episode_start_probability)
         if not 0.0 <= self.episode_start_probability <= 1.0:
             raise ValueError("episode_start_probability must be in [0, 1]")
+        self.supervised_horizon = (
+            self.chunk_size if supervised_horizon is None else int(supervised_horizon)
+        )
+        if not 1 <= self.supervised_horizon <= self.chunk_size:
+            raise ValueError("supervised_horizon must be in [1, chunk_size]")
         self.stats = stats
 
     def __len__(self):
@@ -57,7 +67,7 @@ class RelativeJointDataset(Dataset):
         padded[:valid] = targets
         delta = padded - first_qpos[None]
         delta = normalize_delta(delta, self.stats)
-        is_pad = np.arange(self.chunk_size) >= valid
+        is_pad = np.arange(self.chunk_size) >= min(valid, self.supervised_horizon)
         conditioned_qpos = np.concatenate(
             (normalize_qpos(first_qpos, self.stats), [speed_condition])
         ).astype(np.float32)
@@ -103,6 +113,7 @@ def prepare_datasets(
     split_seed=0,
     episode_start_probability=0.0,
     normalization="q01_q99",
+    supervised_horizon=None,
 ):
     train_paths, validation_paths = split_episodes(dataset_dir, seed=split_seed)
     stats = fit_normalization(train_paths, chunk_size, normalization)
@@ -138,6 +149,11 @@ def prepare_datasets(
                 "train_condition_counts": condition_counts(train_paths),
                 "validation_condition_counts": condition_counts(validation_paths),
                 "episode_start_probability": float(episode_start_probability),
+                "supervised_horizon": (
+                    int(supervised_horizon)
+                    if supervised_horizon is not None
+                    else int(chunk_size)
+                ),
             },
             indent=2,
         )
@@ -145,10 +161,18 @@ def prepare_datasets(
     )
     return (
         RelativeJointDataset(
-            train_paths, stats, chunk_size, episode_start_probability
+            train_paths,
+            stats,
+            chunk_size,
+            episode_start_probability,
+            supervised_horizon,
         ),
         RelativeJointDataset(
-            validation_paths, stats, chunk_size, episode_start_probability
+            validation_paths,
+            stats,
+            chunk_size,
+            episode_start_probability,
+            supervised_horizon,
         ),
         stats,
     )

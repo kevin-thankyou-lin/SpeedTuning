@@ -1,6 +1,6 @@
 version: 2
 workflow:
-  name: speedtuning-pick-executed-prefix-debug-20260822-v2
+  name: speedtuning-pick-normalization-recovery-20260822-v1
   timeout:
     exec_timeout: 10h
     queue_timeout: 2h
@@ -14,25 +14,26 @@ workflow:
   groups:
     - name: comparison
       tasks:
-        - name: finetune-q01-prefix8
+        - name: scratch-q01-full48
+          lead: true
           image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
           command: [bash]
           args: [/tmp/run.sh]
           environment:
-            VARIANT: finetune-q01-prefix8
+            VARIANT: scratch-q01-full48
             NORMALIZATION: q01_q99
-            STEPS: "10000"
-            CHECKPOINT_EVERY: "1000"
-            LEARNING_RATE: "5e-5"
-            INITIALIZE_FROM_BASE: "1"
           files: &run_file
             - path: /tmp/run.sh
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=3deb07747736edf2860c99f2e340c0b52ed46eea
-                PREFIX_GENERATION=speedtuning-pick-executed-prefix-20260822-v2
-                SUPERVISED_HORIZON=8
+                SOURCE_COMMIT=6b0f445c14b29ab225ec898fc019ab41d1b5df80
+                PREFIX_GENERATION=speedtuning-pick-normalization-recovery-20260822-v1
+                SUPERVISED_HORIZON=48
+                STEPS=20000
+                CHECKPOINT_EVERY=5000
+                LEARNING_RATE=1e-4
+                INITIALIZE_FROM_BASE=0
                 CODE=/osmo/run/workspace/SpeedTuning-$VARIANT
                 export MUJOCO_GL=egl
                 export MPLBACKEND=Agg
@@ -49,30 +50,14 @@ workflow:
                 uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
                 PYTHON=$CODE/.venv/bin/python
                 export SOURCE_COMMIT PYTHON PREFIX_GENERATION SUPERVISED_HORIZON
+                export STEPS CHECKPOINT_EVERY LEARNING_RATE INITIALIZE_FROM_BASE
                 "$PYTHON" -m pytest -q tests/test_imitation_data.py tests/test_chunked_policies.py tests/test_training_monitor.py
                 bash scripts/run_pick_prefix_debug.sh
-        - name: scratch-q01-prefix8
-          lead: true
+        - name: scratch-meanstd-full48
           image: *image
           command: [bash]
           args: [/tmp/run.sh]
           environment:
-            VARIANT: scratch-q01-prefix8
-            NORMALIZATION: q01_q99
-            STEPS: "20000"
-            CHECKPOINT_EVERY: "5000"
-            LEARNING_RATE: "1e-4"
-            INITIALIZE_FROM_BASE: "0"
-          files: *run_file
-        - name: scratch-meanstd-prefix8
-          image: *image
-          command: [bash]
-          args: [/tmp/run.sh]
-          environment:
-            VARIANT: scratch-meanstd-prefix8
+            VARIANT: scratch-meanstd-full48
             NORMALIZATION: mean_std
-            STEPS: "20000"
-            CHECKPOINT_EVERY: "5000"
-            LEARNING_RATE: "1e-4"
-            INITIALIZE_FROM_BASE: "0"
           files: *run_file

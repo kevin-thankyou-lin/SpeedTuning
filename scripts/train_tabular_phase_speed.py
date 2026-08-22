@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -24,6 +25,40 @@ from scripts.policy_cli import (  # noqa: E402
 from tabular_phase_speed import TabularTrainingConfig, train_tabular_phase_speed_policy  # noqa: E402
 
 
+class CyclingSpeedEnv:
+    """Cycle deterministically through a small fixed set of scene environments."""
+
+    def __init__(self, envs):
+        if not envs:
+            raise ValueError("at least one scene environment is required")
+        self.envs = list(envs)
+        self.index = -1
+        self.active = self.envs[0]
+
+    def reset(self):
+        self.index = (self.index + 1) % len(self.envs)
+        self.active = self.envs[self.index]
+        return self.active.reset()
+
+    def step_decision(self, *args, **kwargs):
+        return self.active.step_decision(*args, **kwargs)
+
+    def observation_spec(self):
+        return self.envs[0].observation_spec()
+
+    def environment_spec(self):
+        value = dict(self.envs[0].environment_spec())
+        value["fixed_scene_cycle"] = len(self.envs)
+        return value
+
+    def close(self):
+        for env in self.envs:
+            env.close()
+
+    def __getattr__(self, name):
+        return getattr(self.active, name)
+
+
 def main():
     defaults, metadata = defaults_from_argv()
     parser = argparse.ArgumentParser(description=__doc__)
@@ -34,6 +69,11 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument(
+        "--object-poses-json",
+        type=Path,
+        help="Cycle training episodes through this JSON list of fixed object poses.",
+    )
     parser.add_argument("--gamma", type=float, default=0.97)
     parser.add_argument("--epsilon-start", type=float, default=1.0)
     parser.add_argument("--epsilon-end", type=float, default=0.05)
@@ -52,7 +92,19 @@ def main():
     args = parser.parse_args()
 
     reward_fn = make_speed_reward(args.success_bonus, args.speed_weight, args.speed_power)
-    env = build_speed_env(args, reward_fn=reward_fn)
+    if args.object_poses_json is None:
+        env = build_speed_env(args, reward_fn=reward_fn)
+    else:
+        poses = json.loads(args.object_poses_json.read_text())
+        if len(poses) != 3:
+            raise ValueError("object-poses-json must contain exactly three poses")
+        envs = []
+        for pose in poses:
+            scene_args = copy.copy(args)
+            scene_args.object_pose = pose
+            scene_args.randomize_object_pose = False
+            envs.append(build_speed_env(scene_args, reward_fn=reward_fn))
+        env = CyclingSpeedEnv(envs)
     try:
         result = train_tabular_phase_speed_policy(
             env,

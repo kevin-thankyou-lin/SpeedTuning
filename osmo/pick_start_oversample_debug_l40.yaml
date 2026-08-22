@@ -1,0 +1,148 @@
+version: 2
+workflow:
+  name: speedtuning-pick-start-oversample-debug-20260822-v1
+  timeout:
+    exec_timeout: 8h
+    queue_timeout: 2h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 48Gi
+  groups:
+    - name: debug
+      tasks:
+        - name: p10
+          lead: true
+          image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            VARIANT: p10
+            START_PROBABILITY: "0.10"
+          files: &run_file
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=6737c0c9a5cff5b632db410e69c24b320365205e
+                BASE=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-conditioned-relative-joint-20260821-v2/pick
+                BASE_CHECKPOINT=$BASE/checkpoints/slow_150/act/best.pt
+                BASE_CHECKPOINT_SHA=cd984a8812ce5679ee3083cb5c0fb17ff92d29dc62e47b9e11b9d638a5ddd6ba
+                DATASET=$BASE/datasets/slow_150/pick_and_place
+                ROOT=/mnt/amlfs-04/home/linke/speedtuning-relative-imitation/speedtuning-pick-start-oversample-20260822-v1/$VARIANT
+                CODE=/osmo/run/workspace/SpeedTuning-$VARIANT
+                OUTPUT=/osmo/run/outputs/$VARIANT
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                test -d "$DATASET"
+                test -s "$BASE_CHECKPOINT"
+                echo "$BASE_CHECKPOINT_SHA  $BASE_CHECKPOINT" | sha256sum -c -
+                test ! -e "$ROOT" || { echo "refusing to overwrite $ROOT" >&2; exit 30; }
+                mkdir -p "$ROOT" "$OUTPUT"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m pytest -q
+                DATASET="$DATASET" "$PYTHON" - <<'PY'
+                import glob, h5py, os
+                paths = sorted(glob.glob(os.environ["DATASET"] + "/episode_*.hdf5"))[:10]
+                with_seed = []
+                for path in paths:
+                    with h5py.File(path, "r") as root:
+                        with_seed.append(int(root.attrs["seed"]))
+                assert with_seed == list(range(4100001, 4100011)), with_seed
+                print("training-pose-bank", with_seed)
+                PY
+
+                "$PYTHON" -m scripts.train_relative_imitation \
+                  --kind act --dataset-dir "$DATASET" --output-dir "$ROOT/checkpoint" \
+                  --steps 5000 --chunk-size 48 --batch-size 16 --lr 5e-5 --seed 0 \
+                  --episode-start-probability "$START_PROBABILITY" \
+                  --initial-checkpoint "$BASE_CHECKPOINT" --checkpoint-every 1000 \
+                  2>&1 | tee "$ROOT/train.log"
+
+                for CHECKPOINT in "$ROOT"/checkpoint/step-*.pt "$ROOT"/checkpoint/best.pt; do
+                  LABEL=$(basename "$CHECKPOINT" .pt)
+                  "$PYTHON" -m scripts.evaluate_relative_imitation \
+                    --task pick_and_place --checkpoint "$CHECKPOINT" \
+                    --output "$ROOT/eval-$LABEL-training.json" --episodes 10 \
+                    --seed-base 4100001 --replan-interval 8 --speed-condition 0 \
+                    2>&1 | tee "$ROOT/eval-$LABEL-training.log"
+                  "$PYTHON" -m scripts.evaluate_relative_imitation \
+                    --task pick_and_place --checkpoint "$CHECKPOINT" \
+                    --output "$ROOT/eval-$LABEL-fresh.json" --episodes 10 \
+                    --seed-base 6100000 --replan-interval 8 --speed-condition 0 \
+                    2>&1 | tee "$ROOT/eval-$LABEL-fresh.log"
+                done
+
+                export ROOT VARIANT START_PROBABILITY SOURCE_COMMIT BASE_CHECKPOINT_SHA
+                "$PYTHON" - <<'PY'
+                import glob, hashlib, json, os
+                from pathlib import Path
+                root = Path(os.environ["ROOT"])
+                evaluations = {}
+                for path in sorted(root.glob("eval-*.json")):
+                    value = json.loads(path.read_text())
+                    evaluations[path.stem] = {
+                        key: value[key]
+                        for key in (
+                            "checkpoint", "episodes", "successes", "success_rate",
+                            "successful_mean_steps", "clipping",
+                        )
+                    }
+                training = {
+                    key: value for key, value in evaluations.items() if key.endswith("-training")
+                }
+                best_key, best_value = max(
+                    training.items(), key=lambda item: (item[1]["successes"], item[0])
+                )
+                summary = {
+                    "schema": "pick-start-oversample-debug-v1",
+                    "variant": os.environ["VARIANT"],
+                    "episode_start_probability": float(os.environ["START_PROBABILITY"]),
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "base_checkpoint_sha256": os.environ["BASE_CHECKPOINT_SHA"],
+                    "training_pose_seeds": list(range(4100001, 4100011)),
+                    "fresh_monitor_seeds": list(range(6100000, 6100010)),
+                    "best_training_evaluation": best_key,
+                    "best_training_successes": best_value["successes"],
+                    "training_gate_passed": best_value["successes"] >= 9,
+                    "evaluations": evaluations,
+                }
+                (root / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                for path in sorted(root.glob("checkpoint/*.pt")):
+                    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                    with (root / "SHA256SUMS").open("a") as stream:
+                        stream.write(f"{digest}  {path.relative_to(root)}\n")
+                print(json.dumps(summary, indent=2))
+                PY
+                cp "$ROOT/summary.json" "$ROOT/SHA256SUMS" "$OUTPUT"/
+                echo "PICK_START_OVERSAMPLE_DEBUG_COMPLETE variant=$VARIANT root=$ROOT"
+        - name: p25
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            VARIANT: p25
+            START_PROBABILITY: "0.25"
+          files: *run_file
+        - name: p50
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            VARIANT: p50
+            START_PROBABILITY: "0.50"
+          files: *run_file

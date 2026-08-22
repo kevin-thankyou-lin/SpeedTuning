@@ -1,6 +1,6 @@
 version: 2
 workflow:
-  name: speedtuning-original-act-training-eval-20260822-v1
+  name: speedtuning-original-act-training-eval-20260822-v2
   timeout:
     exec_timeout: 18h
     queue_timeout: 2h
@@ -31,7 +31,7 @@ workflow:
                 SOURCE_COMMIT=27acda59fa9a8b359910a4a025c0d7697bb3fc73
                 TRAINING_EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v1
                 TRAINING_ROOT=/mnt/amlfs-04/home/linke/speedtuning-original-act/$TRAINING_EXPERIMENT/$TASK
-                MONITOR_ROOT=$TRAINING_ROOT/training-eval-v1
+                MONITOR_ROOT=$TRAINING_ROOT/training-eval-v2
                 OUTPUT=/osmo/run/outputs/$TASK
                 CODE=/osmo/run/workspace/SpeedTuning-original-act-eval-$TASK
 
@@ -40,6 +40,10 @@ workflow:
                 export PYTHONUNBUFFERED=1
                 export OMP_NUM_THREADS=4
                 export MKL_NUM_THREADS=4
+                while test ! -f "$TRAINING_ROOT/started_at.txt"; do
+                  echo "waiting for trainer-owned root $TRAINING_ROOT"
+                  sleep 20
+                done
                 test ! -e "$MONITOR_ROOT" || { echo "refusing to overwrite $MONITOR_ROOT" >&2; exit 30; }
                 mkdir -p "$MONITOR_ROOT" "$OUTPUT"
                 git clone "$SOURCE_URL" "$CODE"

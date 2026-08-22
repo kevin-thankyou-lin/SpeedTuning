@@ -45,6 +45,7 @@ def server(tmp_path, monkeypatch):
 
 
 def test_three_scene_rank_uses_measured_shared_bank(server):
+    server.probe([2, 2, 2, 2])
     base = server.probe([3, 1, 1, 1])
     assert base["discovery_successes"] == 3
     ladder = server.backoff(
@@ -54,7 +55,7 @@ def test_three_scene_rank_uses_measured_shared_bank(server):
 
     result = server.rank(finalists)
 
-    assert result["budget_used"] == 32
+    assert result["budget_used"] == 35
     assert result["accelerated_qualified"]
     assert result["qualified_schedule"] == [3.0, 1.0, 1.0, 1.0]
     assert [value["successes"] for value in result["finalists"]] == [10, 10]
@@ -64,7 +65,7 @@ def test_three_scene_rank_uses_measured_shared_bank(server):
 
 
 def test_native_baseline_is_external_fallback_not_finalist(server):
-    candidate = server.probe([2, 1, 1, 1])
+    candidate = server.probe([2, 2, 2, 2])
     native_hash = module.schedule_hash((1, 1, 1, 1))
 
     with pytest.raises(ValueError, match="must be accelerated"):
@@ -72,6 +73,7 @@ def test_native_baseline_is_external_fallback_not_finalist(server):
 
 
 def test_backoff_ladder_uses_protected_reserve_and_creates_accelerated_finalists(server):
+    server.probe([2, 2, 2, 2])
     base = server.probe([3.5, 2.5, 4, 2])
     server.state["episodes_used"] = 24
     server._persist()
@@ -90,7 +92,7 @@ def test_backoff_ladder_uses_protected_reserve_and_creates_accelerated_finalists
     assert result["attributed_phase"] == "grasp_lift"
     assert result["causal_evidence"] == "grasp is visibly unsettled before lift"
     assert all(value["discovery_successes"] == 3 for value in result["variants"])
-    assert len(result["accelerated_finalist_hashes"]) == 3
+    assert len(result["accelerated_finalist_hashes"]) == 4
     assert server.state["episodes_used"] == 30
     cached = server.backoff(
         base["schedule_hash"], "grasp_lift", "grasp is visibly unsettled before lift"
@@ -104,22 +106,29 @@ def test_backoff_ladder_uses_protected_reserve_and_creates_accelerated_finalists
 
 
 def test_rank_requires_mandatory_ladder(server):
+    server.probe([2, 2, 2, 2])
     first = server.probe([2.5, 1, 1, 1])
     second = server.probe([3, 1, 1, 1])
     with pytest.raises(ValueError, match="mandatory backoff"):
         server.rank([first["schedule_hash"], second["schedule_hash"]])
 
 
-def test_minimal_acceleration_can_rank_as_sole_degenerate_finalist(server):
-    base = server.probe([1, 1, 1.5, 1])
-    ladder = server.backoff(
+def test_minimal_acceleration_can_rank_as_sole_degenerate_finalist(tmp_path, monkeypatch):
+    monkeypatch.setattr(module, "sample_object_pose", lambda task, seed: (float(seed),) * 7)
+    monkeypatch.setattr(module, "run_phase_schedule", fake_rollout)
+    custom = module.ThreeSceneServer(
+        tmp_path, "pick_and_place", [101, 201, 103], list(range(300, 310)), 50, None
+    )
+    custom.probe([2, 2, 2, 2])
+    base = custom.probe([1, 1, 1.5, 1])
+    ladder = custom.backoff(
         base["schedule_hash"], "transport", "transport is the only accelerated phase"
     )
 
     assert ladder["variants"] == []
-    ranked = server.rank([base["schedule_hash"]])
+    ranked = custom.rank([base["schedule_hash"]])
 
-    assert ranked["budget_used"] == 16
+    assert ranked["budget_used"] == 19
     assert ranked["accelerated_qualified"]
     assert ranked["qualified_schedule"] == [1.0, 1.0, 1.5, 1.0]
 
@@ -127,6 +136,7 @@ def test_minimal_acceleration_can_rank_as_sole_degenerate_finalist(server):
 def test_subthreshold_ranking_keeps_native_deployment_and_accelerated_benchmark(
     server, monkeypatch
 ):
+    server.probe([2, 2, 2, 2])
     base = server.probe([3, 1, 1, 1])
     ladder = server.backoff(base["schedule_hash"], "pre_grasp", "approach has least margin")
     original = module.run_phase_schedule
@@ -158,7 +168,7 @@ def test_probe_always_completes_all_three_distinct_poses(tmp_path, monkeypatch):
         tmp_path, "pick_and_place", [101, 201, 103], list(range(300, 310)), 50, None
     )
 
-    failing = custom.probe([2, 1, 1, 1])
+    failing = custom.probe([2, 2, 2, 2])
 
     assert failing["discovery_completed"] == 3
     assert failing["discovery_successes"] == 2
@@ -166,7 +176,9 @@ def test_probe_always_completes_all_three_distinct_poses(tmp_path, monkeypatch):
 
 
 def test_probe_pool_is_five_complete_three_pose_candidates(server):
-    for speed in (1.5, 2.0, 2.5, 3.0, 3.5):
+    anchor = server.probe([2, 2, 2, 2])
+    assert anchor["discovery_completed"] == 3
+    for speed in (1.5, 2.5, 3.0, 3.5):
         result = server.probe([speed, 1, 1, 1])
         assert result["discovery_completed"] == 3
     assert server.state["episodes_used"] == 18
@@ -175,6 +187,7 @@ def test_probe_pool_is_five_complete_three_pose_candidates(server):
 
 
 def test_backoff_rejects_native_attributed_phase(server):
+    server.probe([2, 2, 2, 2])
     base = server.probe([3, 1, 2, 1])
     with pytest.raises(ValueError, match="already at native"):
         server.backoff(base["schedule_hash"], "grasp_lift", "grasp looks risky")
@@ -186,7 +199,7 @@ def test_imperfect_three_pose_base_can_enter_causal_ladder(tmp_path, monkeypatch
     custom = module.ThreeSceneServer(
         tmp_path, "pick_and_place", [101, 201, 103], list(range(300, 310)), 50, None
     )
-    base = custom.probe([2, 1, 1, 1])
+    base = custom.probe([2, 2, 2, 2])
     assert base["discovery_successes"] == 2
     assert custom.info()["preferred_backoff_base_hash"] == base["schedule_hash"]
 
@@ -194,7 +207,7 @@ def test_imperfect_three_pose_base_can_enter_causal_ladder(tmp_path, monkeypatch
         base["schedule_hash"], "pre_grasp", "scene B overshoots during accelerated approach"
     )
 
-    assert ladder["variants"][0]["schedule"] == [1.5, 1.0, 1.0, 1.0]
+    assert ladder["variants"][0]["schedule"] == [1.5, 2.0, 2.0, 2.0]
     assert ladder["variants"][0]["discovery_successes"] == 3
     required = custom._required_ranking_hashes()
     assert required == [base["schedule_hash"], ladder["variants"][0]["schedule_hash"]]
@@ -210,13 +223,20 @@ def test_imperfect_base_ranks_alone_when_causal_backoffs_are_not_safe(server, mo
         return result
 
     monkeypatch.setattr(module, "run_phase_schedule", always_fails)
-    base = server.probe([3, 1, 1, 1])
+    base = server.probe([2, 2, 2, 2])
     ladder = server.backoff(base["schedule_hash"], "pre_grasp", "all poses miss the approach")
 
     assert all(value["discovery_successes"] == 0 for value in ladder["variants"])
     ranked = server.rank([base["schedule_hash"]])
     assert not ranked["accelerated_qualified"]
     assert ranked["deployment_schedule"] == [1.0, 1.0, 1.0, 1.0]
+
+
+def test_first_accelerated_challenger_must_be_uniform_two(server):
+    with pytest.raises(ValueError, match="first accelerated challenger"):
+        server.probe([4, 4, 4, 4])
+    result = server.probe([2, 2, 2, 2])
+    assert result["schedule"] == [2.0, 2.0, 2.0, 2.0]
 
 
 class DummyEnv:

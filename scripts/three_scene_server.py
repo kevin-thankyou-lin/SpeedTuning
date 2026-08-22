@@ -32,6 +32,7 @@ PROBE_LIMIT = 5
 RANKING_STATES = 10
 BACKOFF_RESERVE = 6
 RANKING_QUALIFICATION_SUCCESSES = 9
+INITIAL_ANCHOR = [2.0, 2.0, 2.0, 2.0]
 
 
 def canonical(value) -> bytes:
@@ -277,6 +278,7 @@ class ThreeSceneServer:
             "phases": list(PHASES),
             "allowed_speeds": list(ALLOWED_SPEEDS),
             "learning_condition": "three frozen discovery scenes plus a fresh ten-pose finalist bank",
+            "required_initial_challenger": INITIAL_ANCHOR,
             "budget": self.budget,
             "budget_used": self.state["episodes_used"],
             "budget_remaining": self.budget - self.state["episodes_used"],
@@ -304,6 +306,9 @@ class ThreeSceneServer:
         }
 
     def probe(self, schedule) -> dict:
+        schedule = list(validate_schedule(schedule))
+        if not self.state["probe_hashes"] and schedule != INITIAL_ANCHOR:
+            raise ValueError("the first accelerated challenger must be uniform [2,2,2,2]x")
         identifier, candidate = self._candidate(schedule)
         if all(value is not None for value in candidate["discovery"]):
             return {"cache_hit": True, **self._public_candidate(identifier)}

@@ -45,19 +45,20 @@ def server(tmp_path, monkeypatch):
 
 
 def test_three_scene_rank_uses_measured_shared_bank(server):
-    first = server.probe([2, 1, 1, 1])
-    second = server.probe([3, 1, 1, 1])
-    assert server.screen(first["schedule_hash"])["discovery_successes"] == 3
-    assert server.screen(second["schedule_hash"])["discovery_successes"] == 3
+    base = server.probe([3, 1, 1, 1])
+    assert server.screen(base["schedule_hash"])["discovery_successes"] == 3
+    ladder = server.backoff(base["schedule_hash"])
+    finalists = [value["schedule_hash"] for value in ladder["variants"]]
 
-    result = server.rank([first["schedule_hash"], second["schedule_hash"]])
+    result = server.rank(finalists)
 
-    assert result["budget_used"] == 29
-    assert result["selected_schedule"] == [3.0, 1.0, 1.0, 1.0]
-    assert [value["successes"] for value in result["finalists"]] == [9, 10]
+    assert result["budget_used"] == 32
+    assert result["accelerated_qualified"]
+    assert result["qualified_schedule"] == [2.5, 1.0, 1.0, 1.0]
+    assert [value["successes"] for value in result["finalists"]] == [10, 9]
     selection = json.loads((server.root / "public" / "SELECTION.json").read_text())
-    assert selection["schedule"] == [3.0, 1.0, 1.0, 1.0]
-    assert server.rank([first["schedule_hash"], second["schedule_hash"]])["cache_hit"]
+    assert selection["deployment_schedule"] == [2.5, 1.0, 1.0, 1.0]
+    assert server.rank(finalists)["cache_hit"]
 
 
 def test_native_baseline_is_external_fallback_not_finalist(server):
@@ -93,7 +94,44 @@ def test_backoff_ladder_uses_protected_reserve_and_creates_accelerated_finalists
 
     ranked = server.rank([value["schedule_hash"] for value in result["variants"]])
     assert ranked["budget_used"] == 50
-    assert ranked["selected_schedule"] == [3.0, 2.0, 3.5, 1.5]
+    assert ranked["qualified_schedule"] == [3.0, 2.0, 3.5, 1.5]
+
+
+def test_rank_requires_mandatory_ladder(server):
+    first = server.probe([2.5, 1, 1, 1])
+    second = server.probe([3, 1, 1, 1])
+    server.screen(first["schedule_hash"])
+    server.screen(second["schedule_hash"])
+    with pytest.raises(ValueError, match="mandatory backoff"):
+        server.rank([first["schedule_hash"], second["schedule_hash"]])
+
+
+def test_subthreshold_ranking_keeps_native_deployment_and_accelerated_benchmark(
+    server, monkeypatch
+):
+    base = server.probe([3, 1, 1, 1])
+    server.screen(base["schedule_hash"])
+    ladder = server.backoff(base["schedule_hash"])
+    original = module.run_phase_schedule
+
+    def unreliable(*args, **kwargs):
+        result = original(*args, **kwargs)
+        seed = int(args[2])
+        if seed in (200, 201):
+            result["success"] = False
+            result["raw_task_success"] = False
+        return result
+
+    monkeypatch.setattr(module, "run_phase_schedule", unreliable)
+    result = server.rank([value["schedule_hash"] for value in ladder["variants"]])
+
+    assert not result["accelerated_qualified"]
+    assert result["qualified_schedule"] is None
+    assert result["deployment_schedule"] == [1.0, 1.0, 1.0, 1.0]
+    assert result["benchmark_schedule"] == [2.5, 1.0, 1.0, 1.0]
+    selection = json.loads((server.root / "public" / "SELECTION.json").read_text())
+    assert selection["schedule"] == result["benchmark_schedule"]
+    assert selection["deployment_schedule"] == [1.0, 1.0, 1.0, 1.0]
 
 
 def test_screen_is_fail_fast_and_ineligible_candidate_cannot_rank(server):

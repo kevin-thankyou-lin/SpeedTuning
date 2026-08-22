@@ -99,10 +99,20 @@ def main() -> int:
     detector = contract.get("phase_detector")
     if args.method == "vlm":
         selection = json.loads(Path(task["vlm_selection"]).read_text())
-        schedule = selection["schedule"]
+        schedule = selection.get("benchmark_schedule", selection["schedule"])
+        selection_metadata = {
+            "accelerated_qualified": selection.get("accelerated_qualified"),
+            "deployment_schedule": selection.get("deployment_schedule"),
+            "benchmark_role": (
+                "qualified_accelerated"
+                if selection.get("accelerated_qualified")
+                else "descriptive_best_effort_accelerated"
+            ),
+        }
     else:
         checkpoint = json.loads(Path(task["tabular_checkpoint"]).read_text())
         schedule = checkpoint["schedule"]
+        selection_metadata = {}
     seeds = [int(seed) for seed in task["evaluation_seeds"]]
     native = native_results(Path(task["native_ledger"]), seeds)
     progress_path = args.output.with_suffix(args.output.suffix + ".progress.json")
@@ -137,6 +147,7 @@ def main() -> int:
         "training_episode_budget": int(contract.get("learning_episodes_per_method", 50)),
         "evaluation_states": 100,
         "phase_observation": "oracle" if detector is None else "learned_rgb_proprio",
+        **selection_metadata,
         **summarize(schedule, native, candidate),
     }
     write_json(args.output, result)

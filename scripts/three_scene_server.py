@@ -33,6 +33,7 @@ SCREEN_LIMIT = 5
 REFINEMENT_EPISODE_LIMIT = 8
 RANKING_STATES = 10
 BACKOFF_RESERVE = 6
+RANKING_QUALIFICATION_SUCCESSES = 9
 
 
 def canonical(value) -> bytes:
@@ -211,9 +212,22 @@ class ThreeSceneServer:
         ]
 
     def _backoff_reserve(self) -> int:
-        if len(self._accelerated_finalists()) >= 2 or self.state["ladder_base_hash"] is not None:
-            return 0
-        return BACKOFF_RESERVE
+        return 0 if self.state["ladder_base_hash"] is not None else BACKOFF_RESERVE
+
+    def _fastest_accelerated_finalist(self) -> str | None:
+        finalists = self._accelerated_finalists()
+        if not finalists:
+            return None
+        return min(
+            finalists,
+            key=lambda identifier: (
+                statistics.fmean(
+                    value["physics_steps"]
+                    for value in self.state["candidates"][identifier]["discovery"]
+                ),
+                identifier,
+            ),
+        )
 
     def _ensure_discovery_budget(self, cost: int, *, use_backoff_reserve: bool = False) -> None:
         if self.state["ranking"] is not None:
@@ -251,6 +265,7 @@ class ThreeSceneServer:
                 "screened_schedules": SCREEN_LIMIT,
                 "refinement_episodes": REFINEMENT_EPISODE_LIMIT,
                 "backoff_reserve": BACKOFF_RESERVE,
+                "ranking_qualification_successes": RANKING_QUALIFICATION_SUCCESSES,
                 "discovery_episode_ceiling": DISCOVERY_LIMIT,
                 "ranking_states_per_finalist": RANKING_STATES,
             },
@@ -350,6 +365,9 @@ class ThreeSceneServer:
             raise ValueError("backoff requires an accelerated candidate hash")
         if not self._safe_three(candidate):
             raise ValueError("backoff requires a safe 3/3 accelerated candidate")
+        fastest = self._fastest_accelerated_finalist()
+        if fastest != identifier:
+            raise ValueError("backoff must use the fastest safe accelerated 3/3 candidate")
         existing = self.state["ladder_base_hash"]
         if existing is not None and existing != identifier:
             raise ValueError("the one permitted backoff ladder is already frozen")
@@ -388,6 +406,21 @@ class ThreeSceneServer:
             "budget_used": self.state["episodes_used"],
         }
 
+    def _required_ranking_hashes(self) -> list[str]:
+        base = self.state["ladder_base_hash"]
+        if base is None:
+            raise ValueError("run the mandatory backoff ladder before ranking")
+        safe_backoffs = [
+            identifier
+            for identifier in self.state["ladder_candidate_hashes"]
+            if self._safe_three(self.state["candidates"][identifier])
+        ]
+        if len(safe_backoffs) >= 2:
+            return safe_backoffs[:2]
+        if len(safe_backoffs) == 1:
+            return [base, safe_backoffs[0]]
+        raise ValueError("the backoff ladder did not produce a second accelerated finalist")
+
     def _rank_summary(self, identifier: str, rollouts: list[dict]) -> dict:
         successful_rollouts = [value for value in rollouts if successful(value)]
         return {
@@ -425,6 +458,9 @@ class ThreeSceneServer:
                 raise ValueError("each finalist must be accelerated; native is an external fallback")
             if not self._safe_three(candidate):
                 raise ValueError("each finalist must have three safe discovery successes")
+        required = self._required_ranking_hashes()
+        if set(identifiers) != set(required):
+            raise ValueError("rank must use the two runner-designated reliability-ladder finalists")
         if self.state["episodes_used"] > DISCOVERY_LIMIT:
             raise ValueError("ranking reserve was violated")
         if self.state["episodes_used"] + 2 * RANKING_STATES > self.budget:
@@ -439,23 +475,45 @@ class ThreeSceneServer:
             self.state["episodes_used"] += len(rollouts)
             summaries.append(self._rank_summary(identifier, rollouts))
             self._persist()
-        selected = max(summaries, key=self._rank_key)
+        best_effort = max(summaries, key=self._rank_key)
+        qualified = [
+            summary
+            for summary in summaries
+            if summary["safety_violations"] == 0
+            and summary["successes"] >= RANKING_QUALIFICATION_SUCCESSES
+        ]
+        selected = None if not qualified else max(qualified, key=self._rank_key)
+        benchmark = best_effort if selected is None else selected
+        native_schedule = [1.0, 1.0, 1.0, 1.0]
         ranking = {
             "cache_hit": False,
-            "selection_rule": "fewest safety violations, then most successes, then lowest successful mean steps",
+            "selection_rule": (
+                "require zero safety violations and at least 9/10 successes; then rank by "
+                "successes and successful mean steps"
+            ),
             "finalists": summaries,
-            "selected_schedule_hash": selected["schedule_hash"],
-            "selected_schedule": selected["schedule"],
+            "accelerated_qualified": selected is not None,
+            "qualified_schedule_hash": None if selected is None else selected["schedule_hash"],
+            "qualified_schedule": None if selected is None else selected["schedule"],
+            "best_effort_schedule_hash": best_effort["schedule_hash"],
+            "best_effort_schedule": best_effort["schedule"],
+            "benchmark_schedule_hash": benchmark["schedule_hash"],
+            "benchmark_schedule": benchmark["schedule"],
+            "deployment_schedule": native_schedule if selected is None else selected["schedule"],
             "budget_used": self.state["episodes_used"],
         }
         self.state["ranking"] = ranking
-        self.state["selected_schedule_hash"] = selected["schedule_hash"]
+        self.state["selected_schedule_hash"] = benchmark["schedule_hash"]
         self._persist()
         write_json(
             self.root / "public" / "SELECTION.json",
             {
-                "schedule_hash": selected["schedule_hash"],
-                "schedule": selected["schedule"],
+                "schedule_hash": benchmark["schedule_hash"],
+                "schedule": benchmark["schedule"],
+                "benchmark_schedule_hash": benchmark["schedule_hash"],
+                "benchmark_schedule": benchmark["schedule"],
+                "deployment_schedule": native_schedule if selected is None else selected["schedule"],
+                "accelerated_qualified": selected is not None,
                 "ranking": ranking,
             },
         )

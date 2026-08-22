@@ -49,13 +49,15 @@ def main() -> int:
     screen.add_argument("schedule_hash")
     refine = commands.add_parser("refine")
     refine.add_argument("schedule")
+    backoff = commands.add_parser("backoff")
+    backoff.add_argument("schedule_hash")
     rank = commands.add_parser("rank")
     rank.add_argument("schedule_hashes", nargs=2)
     args = parser.parse_args()
     payload = {"command": args.command}
     if args.command in {"probe", "refine"}:
         payload["schedule"] = parse_schedule(args.schedule)
-    elif args.command == "screen":
+    elif args.command in {"screen", "backoff"}:
         payload["schedule_hash"] = args.schedule_hash
     elif args.command == "rank":
         payload["schedule_hashes"] = args.schedule_hashes

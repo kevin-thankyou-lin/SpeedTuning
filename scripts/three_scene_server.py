@@ -32,6 +32,7 @@ PROBE_LIMIT = 9
 SCREEN_LIMIT = 5
 REFINEMENT_EPISODE_LIMIT = 8
 RANKING_STATES = 10
+BACKOFF_RESERVE = 6
 
 
 def canonical(value) -> bytes:
@@ -80,6 +81,8 @@ class ThreeSceneServer:
         if self.state_path.exists():
             self.state = json.loads(self.state_path.read_text())
             self._validate_identity()
+            self.state.setdefault("ladder_base_hash", None)
+            self.state.setdefault("ladder_candidate_hashes", [])
             if self._merge_native_candidate():
                 self._persist()
         else:
@@ -133,6 +136,8 @@ class ThreeSceneServer:
             "probe_hashes": [],
             "screen_hashes": [],
             "refinement_episodes": 0,
+            "ladder_base_hash": None,
+            "ladder_candidate_hashes": [],
             "ranking": None,
             "selected_schedule_hash": None,
             "phase_observation": (
@@ -190,10 +195,36 @@ class ThreeSceneServer:
     def _persist(self) -> None:
         write_json(self.state_path, self.state)
 
-    def _ensure_discovery_budget(self, cost: int) -> None:
+    @staticmethod
+    def _is_accelerated(schedule) -> bool:
+        return any(float(speed) > 1.0 for speed in schedule)
+
+    @staticmethod
+    def _safe_three(candidate: dict) -> bool:
+        return all(value is not None and successful(value) for value in candidate["discovery"])
+
+    def _accelerated_finalists(self) -> list[str]:
+        return [
+            identifier
+            for identifier, candidate in self.state["candidates"].items()
+            if self._is_accelerated(candidate["schedule"]) and self._safe_three(candidate)
+        ]
+
+    def _backoff_reserve(self) -> int:
+        if len(self._accelerated_finalists()) >= 2 or self.state["ladder_base_hash"] is not None:
+            return 0
+        return BACKOFF_RESERVE
+
+    def _ensure_discovery_budget(self, cost: int, *, use_backoff_reserve: bool = False) -> None:
         if self.state["ranking"] is not None:
             raise ValueError("ranking is already frozen")
-        if self.state["episodes_used"] + cost > DISCOVERY_LIMIT:
+        reserve = 0 if use_backoff_reserve else self._backoff_reserve()
+        if self.state["episodes_used"] + cost > DISCOVERY_LIMIT - reserve:
+            if reserve:
+                raise ValueError(
+                    "general discovery allocation exhausted; use backoff on the best safe "
+                    "accelerated 3/3 schedule"
+                )
             raise ValueError("discovery allocation exhausted; rank two eligible finalists")
 
     def _candidate(self, schedule) -> tuple[str, dict]:
@@ -219,6 +250,7 @@ class ThreeSceneServer:
                 "probed_schedules": PROBE_LIMIT,
                 "screened_schedules": SCREEN_LIMIT,
                 "refinement_episodes": REFINEMENT_EPISODE_LIMIT,
+                "backoff_reserve": BACKOFF_RESERVE,
                 "discovery_episode_ceiling": DISCOVERY_LIMIT,
                 "ranking_states_per_finalist": RANKING_STATES,
             },
@@ -227,6 +259,9 @@ class ThreeSceneServer:
                 key: self._public_candidate(key) for key in self.state["candidates"]
             },
             "ranking": self.state["ranking"],
+            "accelerated_finalist_hashes": self._accelerated_finalists(),
+            "ladder_base_hash": self.state["ladder_base_hash"],
+            "ladder_candidate_hashes": self.state["ladder_candidate_hashes"],
             "selected_schedule_hash": self.state["selected_schedule_hash"],
             "phase_observation": self.state["phase_observation"],
         }
@@ -299,6 +334,60 @@ class ThreeSceneServer:
                 break
         return {"cache_hit": False, **self._public_candidate(identifier)}
 
+    @staticmethod
+    def _backoff_schedules(schedule) -> list[list[float]]:
+        indices = [list(ALLOWED_SPEEDS).index(float(speed)) for speed in validate_schedule(schedule)]
+        schedules = []
+        for depth in (1, 2):
+            value = [float(ALLOWED_SPEEDS[max(0, index - depth)]) for index in indices]
+            if ThreeSceneServer._is_accelerated(value) and value not in schedules:
+                schedules.append(value)
+        return schedules
+
+    def backoff(self, identifier: str) -> dict:
+        candidate = self.state["candidates"].get(identifier)
+        if candidate is None or not self._is_accelerated(candidate["schedule"]):
+            raise ValueError("backoff requires an accelerated candidate hash")
+        if not self._safe_three(candidate):
+            raise ValueError("backoff requires a safe 3/3 accelerated candidate")
+        existing = self.state["ladder_base_hash"]
+        if existing is not None and existing != identifier:
+            raise ValueError("the one permitted backoff ladder is already frozen")
+        if existing is None:
+            self.state["ladder_base_hash"] = identifier
+            self._persist()
+
+        variants = []
+        for schedule in self._backoff_schedules(candidate["schedule"]):
+            variant_hash, variant = self._candidate(schedule)
+            if variant_hash not in self.state["ladder_candidate_hashes"]:
+                self.state["ladder_candidate_hashes"].append(variant_hash)
+                self._persist()
+            for index in range(3):
+                if variant["discovery"][index] is not None:
+                    if not successful(variant["discovery"][index]):
+                        break
+                    continue
+                self._ensure_discovery_budget(1, use_backoff_reserve=True)
+                variant["discovery"][index] = self._run(
+                    variant["schedule"],
+                    self.discovery_seeds[index],
+                    self.state["discovery_poses"][index],
+                    f"{variant_hash[:12]}-b{index}.mp4",
+                )
+                self.state["episodes_used"] += 1
+                self._persist()
+                if not successful(variant["discovery"][index]):
+                    break
+            variants.append(self._public_candidate(variant_hash))
+        return {
+            "cache_hit": existing is not None,
+            "base": self._public_candidate(identifier),
+            "variants": variants,
+            "accelerated_finalist_hashes": self._accelerated_finalists(),
+            "budget_used": self.state["episodes_used"],
+        }
+
     def _rank_summary(self, identifier: str, rollouts: list[dict]) -> dict:
         successful_rollouts = [value for value in rollouts if successful(value)]
         return {
@@ -332,9 +421,9 @@ class ThreeSceneServer:
             raise ValueError("rank requires exactly two distinct schedule hashes")
         for identifier in identifiers:
             candidate = self.state["candidates"].get(identifier)
-            if candidate is None or not all(
-                value is not None and successful(value) for value in candidate["discovery"]
-            ):
+            if candidate is None or not self._is_accelerated(candidate["schedule"]):
+                raise ValueError("each finalist must be accelerated; native is an external fallback")
+            if not self._safe_three(candidate):
                 raise ValueError("each finalist must have three safe discovery successes")
         if self.state["episodes_used"] > DISCOVERY_LIMIT:
             raise ValueError("ranking reserve was violated")
@@ -382,6 +471,8 @@ class ThreeSceneServer:
             return self.screen(str(request.get("schedule_hash")))
         if command == "refine":
             return self.refine(request.get("schedule"))
+        if command == "backoff":
+            return self.backoff(str(request.get("schedule_hash")))
         if command == "rank":
             return self.rank([str(value) for value in request.get("schedule_hashes", [])])
         raise ValueError(f"unknown command: {command}")

@@ -53,8 +53,9 @@ def wait_paths(paths, processes, label):
 def agent_command(agent_root: Path, runner_root: Path) -> list[str]:
     prompt = (
         "Read AGENTS.md and TASK_CONTRACT.md completely. Execute the full staged three-scene "
-        "search using only this lane's runner results and MP4s. Rank exactly two eligible "
-        "finalists, accept the runner-selected schedule, and write terminal artifacts."
+        "search using only this lane's runner results and MP4s. Preserve the backoff reserve, "
+        "rank exactly two eligible accelerated finalists, accept the runner-selected schedule, "
+        "and write terminal artifacts."
     )
     return [
         "bwrap", "--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts",

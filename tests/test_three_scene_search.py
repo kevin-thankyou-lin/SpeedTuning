@@ -60,15 +60,40 @@ def test_three_scene_rank_uses_measured_shared_bank(server):
     assert server.rank([first["schedule_hash"], second["schedule_hash"]])["cache_hit"]
 
 
-def test_native_baseline_is_eligible_without_duplicate_rollouts(server):
+def test_native_baseline_is_external_fallback_not_finalist(server):
     candidate = server.probe([2, 1, 1, 1])
     server.screen(candidate["schedule_hash"])
     native_hash = module.schedule_hash((1, 1, 1, 1))
 
-    result = server.rank([candidate["schedule_hash"], native_hash])
+    with pytest.raises(ValueError, match="must be accelerated"):
+        server.rank([candidate["schedule_hash"], native_hash])
 
-    assert result["budget_used"] == 26
-    assert server.state["episodes_used"] == 26
+
+def test_backoff_ladder_uses_protected_reserve_and_creates_accelerated_finalists(server):
+    base = server.probe([3.5, 2.5, 4, 2])
+    server.screen(base["schedule_hash"])
+    server.state["episodes_used"] = 24
+    server._persist()
+
+    with pytest.raises(ValueError, match="use backoff"):
+        server.probe([4, 3, 4, 2.5])
+
+    result = server.backoff(base["schedule_hash"])
+
+    assert [value["schedule"] for value in result["variants"]] == [
+        [3.0, 2.0, 3.5, 1.5],
+        [2.5, 1.5, 3.0, 1.0],
+    ]
+    assert all(value["discovery_successes"] == 3 for value in result["variants"])
+    assert len(result["accelerated_finalist_hashes"]) == 3
+    assert server.state["episodes_used"] == 30
+    cached = server.backoff(base["schedule_hash"])
+    assert cached["cache_hit"]
+    assert server.state["episodes_used"] == 30
+
+    ranked = server.rank([value["schedule_hash"] for value in result["variants"]])
+    assert ranked["budget_used"] == 50
+    assert ranked["selected_schedule"] == [3.0, 2.0, 3.5, 1.5]
 
 
 def test_screen_is_fail_fast_and_ineligible_candidate_cannot_rank(server):

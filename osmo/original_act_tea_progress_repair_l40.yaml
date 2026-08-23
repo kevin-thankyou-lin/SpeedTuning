@@ -12,7 +12,7 @@ workflow:
       platform: ovx-l40
       storage: 64Gi
   groups:
-    - name: tea-progress-repair
+    - name: tea-progress-repair-group
       tasks:
         - name: tea-progress-repair
           lead: true

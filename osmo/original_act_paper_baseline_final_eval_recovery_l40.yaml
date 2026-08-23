@@ -1,0 +1,181 @@
+version: 2
+workflow:
+  name: speedtuning-original-act-paper-baseline-final-eval-recovery-20260822-v1
+  timeout:
+    exec_timeout: 4h
+    queue_timeout: 12h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 32Gi
+  groups:
+    - name: tea-recovery
+      tasks:
+        - name: tea
+          lead: true
+          image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/recover-evaluation.sh]
+          environment:
+            TASK: tea
+            RUNTIME_TASK: tea_bag
+            EVAL_SEED_BASE: "8250000"
+            EXPECTED_COMPLETED: "27"
+          files: &recovery_file
+            - path: /tmp/recover-evaluation.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=60eb45c2c015e366275034e5131e1796e732c098
+                EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v3
+                PERSIST_ROOT=/mnt/amlfs-04/home/linke/speedtuning-original-act/$EXPERIMENT
+                RUN=$PERSIST_ROOT/$TASK
+                CHECKPOINTS=$RUN/checkpoints
+                PARTIAL=$RUN/evaluation.json.partial
+                RECOVERY=$RUN/evaluation.recovery.json
+                OUTPUT=/osmo/run/outputs/$TASK
+                CODE=/osmo/run/workspace/SpeedTuning-original-act-eval-recovery-$TASK
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+
+                test ! -e "$RUN/evaluation.json" || { echo "evaluation already complete: $RUN/evaluation.json" >&2; exit 31; }
+                test -s "$CHECKPOINTS/policy_best.ckpt"
+                test -s "$CHECKPOINTS/dataset_stats.pkl"
+                test -s "$CHECKPOINTS/training_complete.json"
+                test -s "$PARTIAL"
+                test -s "$RUN/collection_summary.json"
+                test -s "$RUN/training-eval/progress.json"
+                test ! -e "$RECOVERY" || { echo "refusing to overwrite $RECOVERY" >&2; exit 32; }
+                mkdir -p "$OUTPUT"
+
+                export PARTIAL RUNTIME_TASK EVAL_SEED_BASE EXPECTED_COMPLETED
+                python - <<'PY'
+                import json
+                import os
+                from pathlib import Path
+
+                partial = json.loads(Path(os.environ["PARTIAL"]).read_text())
+                records = partial["rollouts"]
+                expected = int(os.environ["EXPECTED_COMPLETED"])
+                seed_base = int(os.environ["EVAL_SEED_BASE"])
+                assert partial["task"] == os.environ["RUNTIME_TASK"], partial["task"]
+                assert len(records) == expected, (len(records), expected)
+                assert [item["seed"] for item in records] == list(range(seed_base, seed_base + expected))
+                print(f"verified interrupted prefix: task={partial['task']} completed={expected}")
+                PY
+
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                REMAINING=$((50 - EXPECTED_COMPLETED))
+                RECOVERY_SEED_BASE=$((EVAL_SEED_BASE + EXPECTED_COMPLETED))
+                "$PYTHON" -m scripts.evaluate_original_act \
+                  --task "$RUNTIME_TASK" --checkpoint-dir "$CHECKPOINTS" \
+                  --output "$RECOVERY" --num-rollouts "$REMAINING" \
+                  --seed-base "$RECOVERY_SEED_BASE" \
+                  2>&1 | tee "$RUN/evaluate-recovery.log"
+
+                export RUN RECOVERY SOURCE_COMMIT TASK
+                "$PYTHON" - <<'PY'
+                import hashlib
+                import json
+                import os
+                from pathlib import Path
+
+                run = Path(os.environ["RUN"])
+                partial_path = run / "evaluation.json.partial"
+                recovery_path = Path(os.environ["RECOVERY"])
+                partial = json.loads(partial_path.read_text())
+                recovery = json.loads(recovery_path.read_text())
+                records = partial["rollouts"] + recovery["rollouts"]
+                seed_base = int(os.environ["EVAL_SEED_BASE"])
+                assert len(records) == 50, len(records)
+                assert [item["seed"] for item in records] == list(range(seed_base, seed_base + 50))
+                evaluation = {
+                    "schema": "original-act-evaluation-v1",
+                    "task": partial["task"],
+                    "checkpoint": recovery["checkpoint"],
+                    "episodes": 50,
+                    "successes": sum(item["success"] for item in records),
+                    "success_rate": sum(item["success"] for item in records) / 50,
+                    "temporal_aggregation": recovery["temporal_aggregation"],
+                    "recovery": {
+                        "source_workflow": "speedtuning-original-act-paper-baseline-20260822-v3-1",
+                        "interrupted_prefix_episodes": len(partial["rollouts"]),
+                        "continued_episodes": len(recovery["rollouts"]),
+                    },
+                    "rollouts": records,
+                }
+                temporary = run / "evaluation.json.tmp"
+                temporary.write_text(json.dumps(evaluation, indent=2) + "\n")
+                temporary.replace(run / "evaluation.json")
+
+                collection = json.loads((run / "collection_summary.json").read_text())
+                training = json.loads((run / "checkpoints/training_complete.json").read_text())
+                milestone_evaluation = json.loads((run / "training-eval/progress.json").read_text())
+                summary = {
+                    "schema": "original-act-paper-baseline-v1",
+                    "task": os.environ["RUNTIME_TASK"],
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "input_experiment": "speedtuning-original-act-paper-baseline-20260822-v2",
+                    "data": {
+                        "episodes": collection["attempted_episodes"],
+                        "source_successes": collection["source_successes"],
+                        "joint_replay_successes": collection["replay_successes"],
+                        "strategy": "two-pass scripted EE rollout then same-pose joint-target replay",
+                        "camera_names": ["top"],
+                        "action": "absolute 14-D target joint positions",
+                    },
+                    "training": training,
+                    "milestone_evaluation": milestone_evaluation,
+                    "config": {
+                        "epochs": 2000, "batch_size": 8, "lr": 1e-5,
+                        "kl_weight": 10, "chunk_size": 100,
+                        "hidden_dim": 512, "dim_feedforward": 3200,
+                        "encoder_layers": 4, "decoder_layers": 7,
+                        "heads": 8, "backbone": "resnet18",
+                        "normalization": "all-episode per-joint mean/std, minimum std 1e-2",
+                        "relative_actions": False, "speed_condition": False,
+                        "q01_q99_clipping": False,
+                    },
+                    "evaluation": evaluation,
+                }
+                (run / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                with (run / "SHA256SUMS").open("w") as stream:
+                    for relative in (
+                        "checkpoints/policy_best.ckpt", "checkpoints/dataset_stats.pkl",
+                        "collection_summary.json", "evaluation.json", "summary.json",
+                    ):
+                        path = run / relative
+                        stream.write(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")
+                print(json.dumps({"sealed_evaluation": {"task": evaluation["task"], "successes": evaluation["successes"], "episodes": 50}}))
+                PY
+                date --iso-8601=seconds | tee "$RUN/completed_at.txt"
+                cp "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/evaluate-recovery.log" "$OUTPUT"/
+                echo "ORIGINAL_ACT_EVAL_RECOVERY_COMPLETE task=$TASK root=$RUN"
+    - name: insertion-recovery
+      tasks:
+        - name: insertion
+          lead: true
+          image: *image
+          command: [bash]
+          args: [/tmp/recover-evaluation.sh]
+          environment:
+            TASK: insertion
+            RUNTIME_TASK: insertion
+            EVAL_SEED_BASE: "8350000"
+            EXPECTED_COMPLETED: "36"
+          files: *recovery_file

@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from scripts.evaluate_original_act import rollout
 from original_act import (
     OriginalACTDataset,
     create_original_act_policy,
@@ -40,6 +41,30 @@ def _run_loader(policy, loader, device, optimizer=None):
     return _mean_dict(values)
 
 
+def _atomic_json(path, value):
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n")
+    temporary.replace(path)
+
+
+def _evaluate_milestone(task, policy, stats, device, epoch, episodes, seed_base, output_dir):
+    policy.eval()
+    records = [
+        rollout(task, policy, stats, device, seed_base + index)
+        for index in range(episodes)
+    ]
+    result = {
+        "epoch": epoch,
+        "episodes": episodes,
+        "successes": sum(item["success"] for item in records),
+        "success_rate": float(np.mean([item["success"] for item in records])),
+        "seed_base": seed_base,
+        "rollouts": records,
+    }
+    _atomic_json(output_dir / f"epoch-{epoch:04d}.json", result)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset-dir", type=Path, required=True)
@@ -47,6 +72,11 @@ def main():
     parser.add_argument("--num-epochs", type=int, default=2000)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--eval-task")
+    parser.add_argument("--eval-output-dir", type=Path)
+    parser.add_argument("--eval-seed-base", type=int)
+    parser.add_argument("--eval-episodes", type=int, default=10)
+    parser.add_argument("--eval-epochs", type=int, nargs="+", default=(500, 1000, 1500, 1900))
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -92,6 +122,11 @@ def main():
     optimizer = policy.configure_optimizers()
     best = None
     history = []
+    milestone_results = []
+    if args.eval_task:
+        if args.eval_output_dir is None or args.eval_seed_base is None:
+            parser.error("--eval-task requires --eval-output-dir and --eval-seed-base")
+        args.eval_output_dir.mkdir(parents=True, exist_ok=True)
     for epoch in range(args.num_epochs):
         policy.eval()
         with torch.inference_mode():
@@ -105,6 +140,30 @@ def main():
         print(json.dumps(record), flush=True)
         if epoch % 100 == 0:
             torch.save(policy.state_dict(), args.output_dir / f"policy_epoch_{epoch}_seed_{args.seed}.ckpt")
+        if args.eval_task and epoch in args.eval_epochs:
+            checkpoint = args.output_dir / f"policy_epoch_{epoch}_seed_{args.seed}.ckpt"
+            if not checkpoint.exists():
+                torch.save(policy.state_dict(), checkpoint)
+            milestone = _evaluate_milestone(
+                args.eval_task,
+                policy,
+                stats,
+                device,
+                epoch,
+                args.eval_episodes,
+                args.eval_seed_base,
+                args.eval_output_dir,
+            )
+            milestone_results.append(milestone)
+            _atomic_json(
+                args.eval_output_dir / "progress.json",
+                {
+                    "schema": "original-act-inline-training-eval-v1",
+                    "task": args.eval_task,
+                    "results": milestone_results,
+                },
+            )
+            print(json.dumps({"milestone_evaluation": milestone}), flush=True)
 
     torch.save(policy.state_dict(), args.output_dir / "policy_last.ckpt")
     torch.save(best[2], args.output_dir / "policy_best.ckpt")

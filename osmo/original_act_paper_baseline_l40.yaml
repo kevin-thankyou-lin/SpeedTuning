@@ -1,6 +1,6 @@
 version: 2
 workflow:
-  name: speedtuning-original-act-paper-baseline-20260822-v2
+  name: speedtuning-original-act-paper-baseline-20260822-v3
   timeout:
     exec_timeout: 18h
     queue_timeout: 12h
@@ -30,11 +30,13 @@ workflow:
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=732ac0b3b72da009c632027302953497255c78f3
-                EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v2
+                SOURCE_COMMIT=60eb45c2c015e366275034e5131e1796e732c098
+                INPUT_EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v2
+                EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v3
                 PERSIST_ROOT=/mnt/amlfs-04/home/linke/speedtuning-original-act/$EXPERIMENT
+                INPUT_ROOT=/mnt/amlfs-04/home/linke/speedtuning-original-act/$INPUT_EXPERIMENT/$TASK
                 RUN=$PERSIST_ROOT/$TASK
-                DATASET=$RUN/dataset
+                DATASET=$INPUT_ROOT/dataset
                 CHECKPOINTS=$RUN/checkpoints
                 OUTPUT=/osmo/run/outputs/$TASK
                 CODE=/osmo/run/workspace/SpeedTuning-original-act-$TASK
@@ -47,7 +49,11 @@ workflow:
                 export TOKENIZERS_PARALLELISM=false
 
                 test ! -e "$RUN" || { echo "refusing to overwrite $RUN" >&2; exit 30; }
-                mkdir -p "$DATASET" "$CHECKPOINTS" "$OUTPUT"
+                test -d "$DATASET"
+                test -s "$DATASET/collection_summary.json"
+                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 50
+                mkdir -p "$CHECKPOINTS" "$OUTPUT"
+                cp "$DATASET/collection_summary.json" "$RUN/collection_summary.json"
                 date --iso-8601=seconds | tee "$RUN/started_at.txt"
                 git clone "$SOURCE_URL" "$CODE"
                 git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
@@ -59,12 +65,6 @@ workflow:
                 PYTHON=$CODE/.venv/bin/python
                 "$PYTHON" -m pytest -q tests/test_original_act.py tests/test_policy_loss.py \
                   2>&1 | tee "$RUN/pytest.log"
-
-                "$PYTHON" -m scripts.collect_original_act_data \
-                  --task "$RUNTIME_TASK" --dataset-dir "$DATASET" \
-                  --num-episodes 50 --seed-base "$TRAIN_SEED_BASE" \
-                  2>&1 | tee "$RUN/collect.log"
-                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 50
 
                 "$PYTHON" -m scripts.train_original_act \
                   --dataset-dir "$DATASET" --output-dir "$CHECKPOINTS" \
@@ -82,7 +82,7 @@ workflow:
                   --seed-base "$EVAL_SEED_BASE" \
                   2>&1 | tee "$RUN/evaluate.log"
 
-                export RUN TASK RUNTIME_TASK SOURCE_COMMIT
+                export RUN TASK RUNTIME_TASK SOURCE_COMMIT DATASET INPUT_EXPERIMENT
                 "$PYTHON" - <<'PY'
                 import hashlib
                 import json
@@ -90,7 +90,7 @@ workflow:
                 from pathlib import Path
 
                 run = Path(os.environ["RUN"])
-                collection = json.loads((run / "dataset/collection_summary.json").read_text())
+                collection = json.loads((run / "collection_summary.json").read_text())
                 training = json.loads((run / "checkpoints/training_complete.json").read_text())
                 evaluation = json.loads((run / "evaluation.json").read_text())
                 milestone_evaluation = json.loads((run / "training-eval/progress.json").read_text())
@@ -98,6 +98,7 @@ workflow:
                     "schema": "original-act-paper-baseline-v1",
                     "task": os.environ["RUNTIME_TASK"],
                     "source_commit": os.environ["SOURCE_COMMIT"],
+                    "input_experiment": os.environ["INPUT_EXPERIMENT"],
                     "data": {
                         "episodes": collection["attempted_episodes"],
                         "source_successes": collection["source_successes"],
@@ -124,7 +125,7 @@ workflow:
                 with (run / "SHA256SUMS").open("w") as stream:
                     for relative in (
                         "checkpoints/policy_best.ckpt", "checkpoints/dataset_stats.pkl",
-                        "dataset/collection_summary.json", "evaluation.json", "summary.json",
+                        "collection_summary.json", "evaluation.json", "summary.json",
                     ):
                         path = run / relative
                         stream.write(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")

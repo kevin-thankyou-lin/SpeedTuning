@@ -100,25 +100,16 @@ def collect_episode(task, seed, output_path):
     }
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--task", required=True)
-    parser.add_argument("--dataset-dir", type=Path, required=True)
-    parser.add_argument("--num-episodes", type=int, default=50)
-    parser.add_argument("--seed-base", type=int, default=0)
-    args = parser.parse_args()
-    records = []
-    for index in range(args.num_episodes):
-        record = collect_episode(
-            args.task,
-            args.seed_base + index,
-            args.dataset_dir / f"episode_{index}.hdf5",
-        )
-        records.append(record)
-        print(json.dumps({"completed": index + 1, **record}), flush=True)
-    summary = {
+def _atomic_json(path, value):
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(value, indent=2) + "\n")
+    temporary.replace(path)
+
+
+def _summary(task, records):
+    return {
         "schema": "original-act-two-pass-v1",
-        "task": normalize_task_name(args.task),
+        "task": normalize_task_name(task),
         "attempted_episodes": len(records),
         "source_successes": sum(item["source_success"] for item in records),
         "replay_successes": sum(item["replay_success"] for item in records),
@@ -126,9 +117,71 @@ def main():
         "action": "absolute 14-D target joint positions",
         "records": records,
     }
-    (args.dataset_dir / "collection_summary.json").write_text(
-        json.dumps(summary, indent=2) + "\n"
-    )
+
+
+def _existing_records(task, dataset_dir, seed_base):
+    task = normalize_task_name(task)
+    indexed_paths = []
+    for path in Path(dataset_dir).glob("episode_*.hdf5"):
+        try:
+            index = int(path.stem.removeprefix("episode_"))
+        except ValueError as exc:
+            raise ValueError(f"invalid episode filename: {path}") from exc
+        indexed_paths.append((index, path))
+    indexed_paths.sort()
+    if [index for index, _ in indexed_paths] != list(range(len(indexed_paths))):
+        raise ValueError("existing episode indices must be contiguous from zero")
+
+    records = []
+    for index, path in indexed_paths:
+        with h5py.File(path, "r") as root:
+            if root.attrs["task"] != task:
+                raise ValueError(f"task mismatch in {path}: {root.attrs['task']} != {task}")
+            record = {
+                "path": str(path),
+                "seed": int(root.attrs["seed"]),
+                "source_success": bool(root.attrs["source_success"]),
+                "replay_success": bool(root.attrs["replay_success"]),
+                "steps": int(root["action"].shape[0]),
+            }
+        if record["seed"] != seed_base + index:
+            raise ValueError(
+                f"seed mismatch in {path}: {record['seed']} != {seed_base + index}"
+            )
+        records.append(record)
+    return records
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task", required=True)
+    parser.add_argument("--dataset-dir", type=Path, required=True)
+    parser.add_argument("--num-episodes", type=int, default=50)
+    parser.add_argument("--seed-base", type=int, default=0)
+    parser.add_argument("--resume", action="store_true")
+    args = parser.parse_args()
+    args.dataset_dir.mkdir(parents=True, exist_ok=True)
+    records = _existing_records(args.task, args.dataset_dir, args.seed_base)
+    if records and not args.resume:
+        raise FileExistsError("dataset already contains episodes; pass --resume to extend it")
+    if len(records) > args.num_episodes:
+        raise ValueError("existing dataset exceeds requested total episode count")
+    if records:
+        print(json.dumps({"resumed_episodes": len(records)}), flush=True)
+    for index in range(len(records), args.num_episodes):
+        output_path = args.dataset_dir / f"episode_{index}.hdf5"
+        if output_path.exists():
+            raise FileExistsError(output_path)
+        record = collect_episode(
+            args.task,
+            args.seed_base + index,
+            output_path,
+        )
+        records.append(record)
+        _atomic_json(args.dataset_dir / "collection_summary.json", _summary(args.task, records))
+        print(json.dumps({"completed": index + 1, **record}), flush=True)
+    summary = _summary(args.task, records)
+    _atomic_json(args.dataset_dir / "collection_summary.json", summary)
     print(json.dumps(summary, indent=2))
 
 

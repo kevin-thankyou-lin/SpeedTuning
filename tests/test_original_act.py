@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+import pytest
 import torch
 
 from original_act import (
@@ -8,6 +9,7 @@ from original_act import (
     fit_original_act_stats,
     split_original_act_episodes,
 )
+from scripts.collect_original_act_data import _existing_records, _summary
 
 
 def _episode(path, offset):
@@ -51,3 +53,52 @@ def test_transposed_camera_frame_can_be_materialized_by_torch():
     channels_first = image.transpose(2, 0, 1).copy()
     assert channels_first.flags.c_contiguous
     assert torch.as_tensor(channels_first).shape == (3, 480, 640)
+
+
+def test_original_split_accepts_exact_validation_count(tmp_path):
+    paths = [tmp_path / f"episode_{index}.hdf5" for index in range(270)]
+    first = split_original_act_episodes(paths, seed=1, validation_count=20)
+    second = split_original_act_episodes(paths, seed=1, validation_count=20)
+    train, validation = first
+    assert len(train) == 250
+    assert len(validation) == 20
+    assert set(train).isdisjoint(validation)
+    assert first == second
+
+
+def test_original_split_rejects_invalid_validation_count(tmp_path):
+    paths = [tmp_path / "episode_0.hdf5", tmp_path / "episode_1.hdf5"]
+    for count in (0, 2, 3):
+        with pytest.raises(ValueError, match="validation_count"):
+            split_original_act_episodes(paths, validation_count=count)
+
+
+def test_original_collection_reconstructs_resumable_prefix(tmp_path):
+    for index in range(2):
+        path = tmp_path / f"episode_{index}.hdf5"
+        with h5py.File(path, "w") as root:
+            root.attrs.update(
+                task="pick_and_place",
+                seed=100 + index,
+                source_success=True,
+                replay_success=index == 0,
+            )
+            root.create_dataset("action", data=np.zeros((4, 14), dtype=np.float32))
+    records = _existing_records("pick_and_place", tmp_path, seed_base=100)
+    assert [record["seed"] for record in records] == [100, 101]
+    assert [record["replay_success"] for record in records] == [True, False]
+    summary = _summary("pick_and_place", records)
+    assert summary["attempted_episodes"] == 2
+    assert summary["source_successes"] == 2
+    assert summary["replay_successes"] == 1
+
+
+def test_original_collection_rejects_noncontiguous_resume(tmp_path):
+    path = tmp_path / "episode_1.hdf5"
+    with h5py.File(path, "w") as root:
+        root.attrs.update(
+            task="pick_and_place", seed=101, source_success=True, replay_success=True
+        )
+        root.create_dataset("action", data=np.zeros((4, 14), dtype=np.float32))
+    with pytest.raises(ValueError, match="contiguous"):
+        _existing_records("pick_and_place", tmp_path, seed_base=100)

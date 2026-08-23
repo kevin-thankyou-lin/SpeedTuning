@@ -72,6 +72,7 @@ def main():
     parser.add_argument("--num-epochs", type=int, default=2000)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--validation-episodes", type=int)
     parser.add_argument("--eval-task")
     parser.add_argument("--eval-output-dir", type=Path)
     parser.add_argument("--eval-seed-base", type=int)
@@ -83,7 +84,9 @@ def main():
     # Upstream sets seed 1 before data loading, then the requested seed for training.
     set_seed(1)
     paths = episode_paths(args.dataset_dir)
-    train_paths, validation_paths = split_original_act_episodes(paths, seed=1)
+    train_paths, validation_paths = split_original_act_episodes(
+        paths, seed=1, validation_count=args.validation_episodes
+    )
     stats = fit_original_act_stats(paths)
     with (args.output_dir / "dataset_stats.pkl").open("wb") as stream:
         pickle.dump(stats, stream)
@@ -92,6 +95,8 @@ def main():
             {
                 "train": [str(path) for path in train_paths],
                 "validation": [str(path) for path in validation_paths],
+                "train_episodes": len(train_paths),
+                "validation_episodes": len(validation_paths),
                 "normalization_fit": "all episodes, matching upstream ACT utils.py",
             },
             indent=2,
@@ -179,6 +184,8 @@ def main():
                 "best_validation_loss": best[1],
                 "optimizer_updates": args.num_epochs * len(train_loader),
                 "dataset_episodes": len(paths),
+                "train_episodes": len(train_paths),
+                "validation_episodes": len(validation_paths),
             },
             indent=2,
         )

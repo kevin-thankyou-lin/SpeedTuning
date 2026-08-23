@@ -62,15 +62,21 @@ def fit_original_act_stats(paths):
     }
 
 
-def split_original_act_episodes(paths, seed=1):
+def split_original_act_episodes(paths, seed=1, validation_count=None):
     """Match ACT's 80/20 episode split after NumPy seed 1."""
 
     paths = list(map(Path, paths))
     if len(paths) < 2:
         raise ValueError("ACT needs at least two episodes")
+    if validation_count is not None and not 1 <= validation_count < len(paths):
+        raise ValueError("validation_count must leave at least one training episode")
     rng = np.random.RandomState(seed)
     indices = rng.permutation(len(paths))
-    boundary = int(0.8 * len(paths))
+    boundary = (
+        int(0.8 * len(paths))
+        if validation_count is None
+        else len(paths) - validation_count
+    )
     return ([paths[i] for i in indices[:boundary]], [paths[i] for i in indices[boundary:]])
 
 

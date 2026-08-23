@@ -1,0 +1,118 @@
+version: 2
+workflow:
+  name: speedtuning-original-act-tea-progress-repair-20260823-v1
+  timeout:
+    exec_timeout: 18h
+    queue_timeout: 4h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 64Gi
+  groups:
+    - name: tea-progress-repair
+      tasks:
+        - name: tea-progress-repair
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=26e226fd6c93808605ef0319f0d7831c1fb4f978
+                BASE_EXPERIMENT=speedtuning-original-act-250train20val-20260823-v1
+                EXPERIMENT=speedtuning-original-act-tea-progress-repair-20260823-v1
+                PERSIST_PARENT=/mnt/amlfs-04/home/linke/speedtuning-original-act
+                DATASET=$PERSIST_PARENT/$BASE_EXPERIMENT/tea/dataset
+                RUN=$PERSIST_PARENT/$EXPERIMENT/tea
+                CHECKPOINTS=$RUN/checkpoints
+                OUTPUT=/osmo/run/outputs/tea
+                CODE=/osmo/run/workspace/SpeedTuning-tea-progress-repair
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+
+                test ! -e "$RUN" || { echo "refusing to overwrite $RUN" >&2; exit 30; }
+                test -s "$DATASET/collection_summary.json"
+                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 270
+                mkdir -p "$CHECKPOINTS" "$OUTPUT"
+                date --iso-8601=seconds | tee "$RUN/started_at.txt"
+
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m pytest -q tests/test_original_act.py tests/test_policy_loss.py \
+                  2>&1 | tee "$RUN/pytest.log"
+
+                "$PYTHON" -m scripts.train_original_act \
+                  --dataset-dir "$DATASET" --output-dir "$CHECKPOINTS" \
+                  --num-epochs 2000 --batch-size 8 --seed 0 \
+                  --validation-episodes 20 --progress-condition \
+                  --eval-task tea_bag --eval-output-dir "$RUN/training-eval" \
+                  --eval-seed-base 9500000 --eval-episodes 20 \
+                  --eval-epochs 250 500 1000 1500 1900 \
+                  2>&1 | tee "$RUN/train.log"
+                test -s "$CHECKPOINTS/policy_best.ckpt"
+                test -s "$CHECKPOINTS/training_complete.json"
+
+                "$PYTHON" -m scripts.evaluate_original_act \
+                  --task tea_bag --checkpoint-dir "$CHECKPOINTS" \
+                  --output "$RUN/evaluation.json" --num-rollouts 50 \
+                  --seed-base 9250000 --progress-condition \
+                  2>&1 | tee "$RUN/evaluate.log"
+
+                export RUN SOURCE_COMMIT BASE_EXPERIMENT
+                "$PYTHON" - <<'PY'
+                import hashlib
+                import json
+                import os
+                from pathlib import Path
+
+                run = Path(os.environ["RUN"])
+                training = json.loads((run / "checkpoints/training_complete.json").read_text())
+                config = json.loads((run / "checkpoints/policy_config.json").read_text())
+                milestones = json.loads((run / "training-eval/progress.json").read_text())
+                evaluation = json.loads((run / "evaluation.json").read_text())
+                assert training["train_episodes"] == 250
+                assert training["validation_episodes"] == 20
+                assert training["progress_condition"] is True
+                assert config["qpos_dim"] == 15
+                assert evaluation["progress_condition"] is True
+                summary = {
+                    "schema": "original-act-tea-progress-repair-v1",
+                    "task": "tea_bag",
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "base_experiment": os.environ["BASE_EXPERIMENT"],
+                    "cause": "teacher-forced policy is accurate but stalls after grasp even on an exact training pose",
+                    "repair": "append normalized episode progress in [-1, 1] to the 14-D qpos observation",
+                    "training": training,
+                    "config": config,
+                    "milestone_evaluation": milestones,
+                    "evaluation": evaluation,
+                }
+                (run / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                with (run / "SHA256SUMS").open("w") as stream:
+                    for relative in (
+                        "checkpoints/policy_best.ckpt", "checkpoints/dataset_stats.pkl",
+                        "evaluation.json", "summary.json",
+                    ):
+                        path = run / relative
+                        stream.write(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")
+                PY
+                date --iso-8601=seconds | tee "$RUN/completed_at.txt"
+                cp "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/pytest.log" "$OUTPUT"/
+                echo "ORIGINAL_ACT_TEA_PROGRESS_REPAIR_COMPLETE root=$RUN"

@@ -32,7 +32,15 @@ from sim_tasks import (
 # Historical replay scripts set this after constructing the environment and before
 # reset. New code may pass object_pose directly to make_sim_env.
 BOX_POSE = [None]
-CAMERA_IDS = {"top": "top", "angle": "angle", "vis": "front_close"}
+CAMERA_IDS = {
+    "top": "top",
+    "angle": "angle",
+    "vis": "front_close",
+    "left_pillar": "left_pillar",
+    "right_pillar": "right_pillar",
+    "left_wrist": "left_wrist",
+    "right_wrist": "right_wrist",
+}
 
 
 def make_sim_env(

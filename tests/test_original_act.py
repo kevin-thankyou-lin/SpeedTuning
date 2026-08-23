@@ -23,6 +23,13 @@ def _episode(path, offset):
         root.create_dataset("action", data=np.full((4, 14), offset + 1, dtype=np.float32))
 
 
+def _add_camera(path, name):
+    with h5py.File(path, "r+") as root:
+        root["observations/images"].create_dataset(
+            name, data=np.zeros((4, 480, 640, 3), dtype=np.uint8)
+        )
+
+
 def test_original_contract_and_dataset(tmp_path, monkeypatch):
     paths = []
     for index in range(10):
@@ -84,6 +91,10 @@ def test_original_collection_reconstructs_resumable_prefix(tmp_path):
                 source_success=True,
                 replay_success=index == 0,
             )
+            images = root.create_group("observations/images")
+            images.create_dataset(
+                "top", data=np.zeros((4, 480, 640, 3), dtype=np.uint8)
+            )
             root.create_dataset("action", data=np.zeros((4, 14), dtype=np.float32))
     records = _existing_records("pick_and_place", tmp_path, seed_base=100)
     assert [record["seed"] for record in records] == [100, 101]
@@ -120,3 +131,16 @@ def test_original_dataset_can_append_progress_feature(tmp_path, monkeypatch):
     sample = OriginalACTDataset([path], stats, include_progress=True)[0]
     assert sample[1].shape == (15,)
     assert sample[1][-1].item() == pytest.approx(normalized_episode_progress(2, 4))
+
+
+def test_original_dataset_stacks_requested_cameras(tmp_path, monkeypatch):
+    path = tmp_path / "episode_0.hdf5"
+    _episode(path, 0.0)
+    _add_camera(path, "angle")
+    _add_camera(path, "left_wrist")
+    stats = fit_original_act_stats([path])
+    monkeypatch.setattr(np.random, "choice", lambda _: 0)
+    sample = OriginalACTDataset(
+        [path], stats, camera_names=("angle", "left_wrist")
+    )[0]
+    assert sample[0].shape == (2, 3, 480, 640)

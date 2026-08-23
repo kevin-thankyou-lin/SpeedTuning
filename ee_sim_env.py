@@ -33,7 +33,15 @@ from sim_tasks import (
 # Kept for compatibility with the historical scripts. New code should pass
 # render_images=False to make_ee_sim_env instead.
 DISABLE_RENDER = [False]
-CAMERA_IDS = {"top": "top", "angle": "angle", "vis": "front_close"}
+CAMERA_IDS = {
+    "top": "top",
+    "angle": "angle",
+    "vis": "front_close",
+    "left_pillar": "left_pillar",
+    "right_pillar": "right_pillar",
+    "left_wrist": "left_wrist",
+    "right_wrist": "right_wrist",
+}
 
 
 def make_ee_sim_env(

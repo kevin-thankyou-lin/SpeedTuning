@@ -129,12 +129,14 @@ class OriginalACTDataset(Dataset):
         )
 
 
-def create_original_act_policy(device=None, qpos_dim=None):
+def create_original_act_policy(device=None, qpos_dim=None, camera_names=None):
     from policy import ACTPolicy
 
     config = dict(ORIGINAL_ACT_CONFIG)
     if qpos_dim is not None:
         config["qpos_dim"] = int(qpos_dim)
+    if camera_names is not None:
+        config["camera_names"] = list(camera_names)
     config["device"] = str(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     return ACTPolicy(config), config
 

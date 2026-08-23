@@ -22,12 +22,20 @@ def _atomic_json(path, value):
     temporary.replace(path)
 
 
-def rollout(task, policy, stats, device, seed, progress_condition=False):
+def rollout(
+    task,
+    policy,
+    stats,
+    device,
+    seed,
+    progress_condition=False,
+    camera_names=("top",),
+):
     episode_len = get_task_spec(task).episode_len
     env = make_sim_env(
         task,
         render_images=True,
-        render_camera_names=("top",),
+        render_camera_names=camera_names,
         seed=int(seed),
         randomize_object_pose=True,
     )
@@ -45,13 +53,15 @@ def rollout(task, policy, stats, device, seed, progress_condition=False):
                     qpos = np.concatenate(
                         [qpos, np.asarray([normalized_episode_progress(step, episode_len)])]
                     )
-                image = np.asarray(observation["images"]["top"])
+                image = np.stack(
+                    [observation["images"][name] for name in camera_names]
+                )
                 qpos_tensor = torch.as_tensor(qpos, dtype=torch.float32, device=device)[None]
                 image_tensor = torch.as_tensor(
-                    image.transpose(2, 0, 1).copy(),
+                    image.transpose(0, 3, 1, 2).copy(),
                     dtype=torch.float32,
                     device=device,
-                )[None, None] / 255.0
+                )[None] / 255.0
                 actions = policy(qpos_tensor, image_tensor)
                 all_time_actions[step, step : step + 100] = actions[0]
                 candidates = all_time_actions[:, step]
@@ -87,12 +97,15 @@ def main():
     parser.add_argument("--num-rollouts", type=int, default=50)
     parser.add_argument("--seed-base", type=int, default=1000)
     parser.add_argument("--progress-condition", action="store_true")
+    parser.add_argument("--camera-names", nargs="+", default=("top",))
     args = parser.parse_args()
     task = normalize_task_name(args.task)
     set_seed(1000)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     policy, _ = create_original_act_policy(
-        device, qpos_dim=15 if args.progress_condition else 14
+        device,
+        qpos_dim=15 if args.progress_condition else 14,
+        camera_names=args.camera_names,
     )
     checkpoint = args.checkpoint_dir / args.checkpoint_name
     policy.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
@@ -111,6 +124,7 @@ def main():
                 device,
                 args.seed_base + index,
                 progress_condition=args.progress_condition,
+                camera_names=args.camera_names,
             )
         )
         _atomic_json(partial, {"task": task, "rollouts": records})
@@ -124,6 +138,7 @@ def main():
         "success_rate": float(np.mean([item["success"] for item in records])),
         "temporal_aggregation": {"enabled": True, "m": 0.01},
         "progress_condition": bool(args.progress_condition),
+        "camera_names": list(args.camera_names),
         "rollouts": records,
     }
     _atomic_json(args.output, report)

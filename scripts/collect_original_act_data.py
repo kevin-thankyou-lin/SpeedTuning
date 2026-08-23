@@ -24,7 +24,7 @@ def _target_from_ee_timestep(timestep):
     return target
 
 
-def collect_episode(task, seed, output_path):
+def collect_episode(task, seed, output_path, camera_names=("top",)):
     """EE-script rollout followed by same-pose joint-target replay, as upstream."""
 
     task = normalize_task_name(task)
@@ -48,7 +48,7 @@ def collect_episode(task, seed, output_path):
     joint_env = make_sim_env(
         task,
         render_images=True,
-        render_camera_names=("top",),
+        render_camera_names=camera_names,
         seed=int(seed),
         object_pose=object_pose,
     )
@@ -67,10 +67,16 @@ def collect_episode(task, seed, output_path):
     observations = replay[:-1]
     qpos = np.asarray([ts.observation["qpos"] for ts in observations[:episode_len]])
     qvel = np.asarray([ts.observation["qvel"] for ts in observations[:episode_len]])
-    images = np.asarray(
-        [ts.observation["images"]["top"] for ts in observations[:episode_len]],
-        dtype=np.uint8,
-    )
+    images = {
+        camera_name: np.asarray(
+            [
+                ts.observation["images"][camera_name]
+                for ts in observations[:episode_len]
+            ],
+            dtype=np.uint8,
+        )
+        for camera_name in camera_names
+    }
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with h5py.File(output_path, "w", rdcc_nbytes=2 * 1024**2) as root:
@@ -86,9 +92,13 @@ def collect_episode(task, seed, output_path):
         observations_group.create_dataset("qpos", data=qpos)
         observations_group.create_dataset("qvel", data=qvel)
         image_group = observations_group.create_group("images")
-        image_group.create_dataset(
-            "top", data=images, chunks=(1, 480, 640, 3), dtype="uint8"
-        )
+        for camera_name, camera_images in images.items():
+            image_group.create_dataset(
+                camera_name,
+                data=camera_images,
+                chunks=(1, *camera_images.shape[1:]),
+                dtype="uint8",
+            )
         root.create_dataset("action", data=actions)
         root.create_dataset("object_pose", data=object_pose)
     return {
@@ -106,20 +116,20 @@ def _atomic_json(path, value):
     temporary.replace(path)
 
 
-def _summary(task, records):
+def _summary(task, records, camera_names=("top",)):
     return {
         "schema": "original-act-two-pass-v1",
         "task": normalize_task_name(task),
         "attempted_episodes": len(records),
         "source_successes": sum(item["source_success"] for item in records),
         "replay_successes": sum(item["replay_success"] for item in records),
-        "camera_names": ["top"],
+        "camera_names": list(camera_names),
         "action": "absolute 14-D target joint positions",
         "records": records,
     }
 
 
-def _existing_records(task, dataset_dir, seed_base):
+def _existing_records(task, dataset_dir, seed_base, camera_names=("top",)):
     task = normalize_task_name(task)
     indexed_paths = []
     for path in Path(dataset_dir).glob("episode_*.hdf5"):
@@ -144,6 +154,12 @@ def _existing_records(task, dataset_dir, seed_base):
                 "replay_success": bool(root.attrs["replay_success"]),
                 "steps": int(root["action"].shape[0]),
             }
+            saved_cameras = set(root["observations/images"])
+            if saved_cameras != set(camera_names):
+                raise ValueError(
+                    f"camera mismatch in {path}: {sorted(saved_cameras)} != "
+                    f"{sorted(camera_names)}"
+                )
         if record["seed"] != seed_base + index:
             raise ValueError(
                 f"seed mismatch in {path}: {record['seed']} != {seed_base + index}"
@@ -158,10 +174,13 @@ def main():
     parser.add_argument("--dataset-dir", type=Path, required=True)
     parser.add_argument("--num-episodes", type=int, default=50)
     parser.add_argument("--seed-base", type=int, default=0)
+    parser.add_argument("--camera-names", nargs="+", default=("top",))
     parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     args.dataset_dir.mkdir(parents=True, exist_ok=True)
-    records = _existing_records(args.task, args.dataset_dir, args.seed_base)
+    records = _existing_records(
+        args.task, args.dataset_dir, args.seed_base, camera_names=args.camera_names
+    )
     if records and not args.resume:
         raise FileExistsError("dataset already contains episodes; pass --resume to extend it")
     if len(records) > args.num_episodes:
@@ -176,11 +195,15 @@ def main():
             args.task,
             args.seed_base + index,
             output_path,
+            camera_names=args.camera_names,
         )
         records.append(record)
-        _atomic_json(args.dataset_dir / "collection_summary.json", _summary(args.task, records))
+        _atomic_json(
+            args.dataset_dir / "collection_summary.json",
+            _summary(args.task, records, camera_names=args.camera_names),
+        )
         print(json.dumps({"completed": index + 1, **record}), flush=True)
-    summary = _summary(args.task, records)
+    summary = _summary(args.task, records, camera_names=args.camera_names)
     _atomic_json(args.dataset_dir / "collection_summary.json", summary)
     print(json.dumps(summary, indent=2))
 

@@ -57,6 +57,7 @@ def _evaluate_milestone(
     seed_base,
     output_dir,
     progress_condition=False,
+    camera_names=("top",),
 ):
     policy.eval()
     records = [
@@ -67,6 +68,7 @@ def _evaluate_milestone(
             device,
             seed_base + index,
             progress_condition=progress_condition,
+            camera_names=camera_names,
         )
         for index in range(episodes)
     ]
@@ -91,6 +93,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--validation-episodes", type=int)
     parser.add_argument("--progress-condition", action="store_true")
+    parser.add_argument("--camera-names", nargs="+", default=("top",))
     parser.add_argument("--eval-task")
     parser.add_argument("--eval-output-dir", type=Path)
     parser.add_argument("--eval-seed-base", type=int)
@@ -122,7 +125,12 @@ def main():
         + "\n"
     )
     train_loader = DataLoader(
-        OriginalACTDataset(train_paths, stats, include_progress=args.progress_condition),
+        OriginalACTDataset(
+            train_paths,
+            stats,
+            camera_names=args.camera_names,
+            include_progress=args.progress_condition,
+        ),
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=True,
@@ -130,7 +138,12 @@ def main():
         prefetch_factor=1,
     )
     validation_loader = DataLoader(
-        OriginalACTDataset(validation_paths, stats, include_progress=args.progress_condition),
+        OriginalACTDataset(
+            validation_paths,
+            stats,
+            camera_names=args.camera_names,
+            include_progress=args.progress_condition,
+        ),
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=True,
@@ -141,7 +154,9 @@ def main():
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     policy, config = create_original_act_policy(
-        device, qpos_dim=15 if args.progress_condition else 14
+        device,
+        qpos_dim=15 if args.progress_condition else 14,
+        camera_names=args.camera_names,
     )
     policy.to(device)
     optimizer = policy.configure_optimizers()
@@ -179,6 +194,7 @@ def main():
                 args.eval_seed_base,
                 args.eval_output_dir,
                 progress_condition=args.progress_condition,
+                camera_names=args.camera_names,
             )
             milestone_results.append(milestone)
             _atomic_json(

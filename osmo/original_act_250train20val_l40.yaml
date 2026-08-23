@@ -1,0 +1,189 @@
+version: 2
+workflow:
+  name: speedtuning-original-act-250train20val-20260823-v1
+  timeout:
+    exec_timeout: 30h
+    queue_timeout: 12h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 64Gi
+  groups:
+    - name: pick-250train20val
+      tasks:
+        - name: pick
+          lead: true
+          image: &image nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: pick
+            RUNTIME_TASK: pick_and_place
+            TRAIN_SEED_BASE: "8100000"
+            MILESTONE_SEED_BASE: "9400000"
+            FINAL_SEED_BASE: "9150000"
+          files: &run_file
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=9e3a149b4dada45be9a436517f5fdab414427eef
+                INPUT_EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v2
+                EXPERIMENT=speedtuning-original-act-250train20val-20260823-v1
+                PERSIST_PARENT=/mnt/amlfs-04/home/linke/speedtuning-original-act
+                INPUT_ROOT=$PERSIST_PARENT/$INPUT_EXPERIMENT/$TASK
+                RUN=$PERSIST_PARENT/$EXPERIMENT/$TASK
+                DATASET=$RUN/dataset
+                CHECKPOINTS=$RUN/checkpoints
+                OUTPUT=/osmo/run/outputs/$TASK
+                CODE=/osmo/run/workspace/SpeedTuning-original-act-$TASK
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+
+                test ! -e "$RUN" || { echo "refusing to overwrite $RUN" >&2; exit 30; }
+                test -d "$INPUT_ROOT/dataset"
+                test -s "$INPUT_ROOT/dataset/collection_summary.json"
+                test "$(find "$INPUT_ROOT/dataset" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 50
+                AVAILABLE_KIB=$(df -Pk "$PERSIST_PARENT" | awk 'NR==2 {print $4}')
+                REQUIRED_KIB=$((350 * 1024 * 1024))
+                test "$AVAILABLE_KIB" -ge "$REQUIRED_KIB" || {
+                  echo "insufficient shared storage: available_kib=$AVAILABLE_KIB required_kib=$REQUIRED_KIB" >&2
+                  exit 31
+                }
+                mkdir -p "$DATASET" "$CHECKPOINTS" "$OUTPUT"
+                cp -al "$INPUT_ROOT/dataset"/. "$DATASET"/
+                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 50
+                date --iso-8601=seconds | tee "$RUN/started_at.txt"
+
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m pytest -q tests/test_original_act.py tests/test_policy_loss.py \
+                  2>&1 | tee "$RUN/pytest.log"
+
+                "$PYTHON" -m scripts.collect_original_act_data \
+                  --task "$RUNTIME_TASK" --dataset-dir "$DATASET" \
+                  --num-episodes 270 --seed-base "$TRAIN_SEED_BASE" --resume \
+                  2>&1 | tee "$RUN/collect.log"
+                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 270
+
+                "$PYTHON" -m scripts.train_original_act \
+                  --dataset-dir "$DATASET" --output-dir "$CHECKPOINTS" \
+                  --num-epochs 2000 --batch-size 8 --seed 0 \
+                  --validation-episodes 20 \
+                  --eval-task "$RUNTIME_TASK" --eval-output-dir "$RUN/training-eval" \
+                  --eval-seed-base "$MILESTONE_SEED_BASE" --eval-episodes 20 \
+                  --eval-epochs 250 500 1000 1500 1900 \
+                  2>&1 | tee "$RUN/train.log"
+                test -s "$CHECKPOINTS/policy_best.ckpt"
+                test -s "$CHECKPOINTS/training_complete.json"
+
+                "$PYTHON" -m scripts.evaluate_original_act \
+                  --task "$RUNTIME_TASK" --checkpoint-dir "$CHECKPOINTS" \
+                  --output "$RUN/evaluation.json" --num-rollouts 50 \
+                  --seed-base "$FINAL_SEED_BASE" \
+                  2>&1 | tee "$RUN/evaluate.log"
+
+                export RUN TASK RUNTIME_TASK SOURCE_COMMIT DATASET INPUT_EXPERIMENT
+                "$PYTHON" - <<'PY'
+                import hashlib
+                import json
+                import os
+                from pathlib import Path
+
+                run = Path(os.environ["RUN"])
+                collection = json.loads((run / "dataset/collection_summary.json").read_text())
+                training = json.loads((run / "checkpoints/training_complete.json").read_text())
+                evaluation = json.loads((run / "evaluation.json").read_text())
+                milestones = json.loads((run / "training-eval/progress.json").read_text())
+                assert collection["attempted_episodes"] == 270
+                assert training["dataset_episodes"] == 270
+                assert training["train_episodes"] == 250
+                assert training["validation_episodes"] == 20
+                assert [item["episodes"] for item in milestones["results"]] == [20] * 5
+                assert evaluation["episodes"] == 50
+                summary = {
+                    "schema": "original-act-250train20val-v1",
+                    "task": os.environ["RUNTIME_TASK"],
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "input_experiment": os.environ["INPUT_EXPERIMENT"],
+                    "data": {
+                        "episodes": 270,
+                        "train_episodes": 250,
+                        "validation_episodes": 20,
+                        "source_successes": collection["source_successes"],
+                        "joint_replay_successes": collection["replay_successes"],
+                        "strategy": "original ACT two-pass scripted EE rollout then same-pose joint-target replay",
+                        "reused_prefix_episodes": 50,
+                        "new_episodes": 220,
+                        "camera_names": ["top"],
+                        "action": "absolute 14-D target joint positions",
+                    },
+                    "training": training,
+                    "milestone_evaluation": milestones,
+                    "config": {
+                        "epochs": 2000, "batch_size": 8, "lr": 1e-5,
+                        "kl_weight": 10, "chunk_size": 100,
+                        "hidden_dim": 512, "dim_feedforward": 3200,
+                        "encoder_layers": 4, "decoder_layers": 7,
+                        "heads": 8, "backbone": "resnet18",
+                        "normalization": "original ACT all-episode per-joint mean/std, minimum std 1e-2",
+                        "relative_actions": False, "speed_condition": False,
+                        "q01_q99_clipping": False,
+                        "temporal_ensembling": True,
+                    },
+                    "evaluation": evaluation,
+                }
+                (run / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                with (run / "SHA256SUMS").open("w") as stream:
+                    for relative in (
+                        "checkpoints/policy_best.ckpt", "checkpoints/dataset_stats.pkl",
+                        "dataset/collection_summary.json", "evaluation.json", "summary.json",
+                    ):
+                        path = run / relative
+                        stream.write(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")
+                PY
+                date --iso-8601=seconds | tee "$RUN/completed_at.txt"
+                cp "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/pytest.log" "$OUTPUT"/
+                echo "ORIGINAL_ACT_250TRAIN20VAL_COMPLETE task=$TASK root=$RUN"
+    - name: tea-250train20val
+      tasks:
+        - name: tea
+          lead: true
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: tea
+            RUNTIME_TASK: tea_bag
+            TRAIN_SEED_BASE: "8200000"
+            MILESTONE_SEED_BASE: "9500000"
+            FINAL_SEED_BASE: "9250000"
+          files: *run_file
+    - name: insertion-250train20val
+      tasks:
+        - name: insertion
+          lead: true
+          image: *image
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: insertion
+            RUNTIME_TASK: insertion
+            TRAIN_SEED_BASE: "8300000"
+            MILESTONE_SEED_BASE: "9600000"
+            FINAL_SEED_BASE: "9350000"
+          files: *run_file

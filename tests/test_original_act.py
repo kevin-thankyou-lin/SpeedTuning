@@ -1,5 +1,6 @@
 import h5py
 import numpy as np
+import torch
 
 from original_act import (
     ORIGINAL_ACT_CONFIG,
@@ -43,3 +44,10 @@ def test_original_contract_and_dataset(tmp_path, monkeypatch):
         "weight_decay": 1e-4, "qpos_dim": 14, "action_dim": 14,
         "original_loss_reduction": True, "deterministic_training": False,
     }
+
+
+def test_transposed_camera_frame_can_be_materialized_by_torch():
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+    channels_first = image.transpose(2, 0, 1).copy()
+    assert channels_first.flags.c_contiguous
+    assert torch.as_tensor(channels_first).shape == (3, 480, 640)

@@ -44,7 +44,9 @@ def rollout(task, policy, stats, device, seed):
                 image = np.asarray(observation["images"]["top"])
                 qpos_tensor = torch.as_tensor(qpos, dtype=torch.float32, device=device)[None]
                 image_tensor = torch.as_tensor(
-                    image.transpose(2, 0, 1), dtype=torch.float32, device=device
+                    image.transpose(2, 0, 1).copy(),
+                    dtype=torch.float32,
+                    device=device,
                 )[None, None] / 255.0
                 actions = policy(qpos_tensor, image_tensor)
                 all_time_actions[step, step : step + 100] = actions[0]

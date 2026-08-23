@@ -1,9 +1,9 @@
 version: 2
 workflow:
-  name: speedtuning-original-act-paper-baseline-20260822-v1
+  name: speedtuning-original-act-paper-baseline-20260822-v2
   timeout:
     exec_timeout: 18h
-    queue_timeout: 2h
+    queue_timeout: 12h
   resources:
     default:
       cpu: 12
@@ -24,13 +24,14 @@ workflow:
             RUNTIME_TASK: pick_and_place
             TRAIN_SEED_BASE: "8100000"
             EVAL_SEED_BASE: "8150000"
+            MILESTONE_SEED_BASE: "8400000"
           files: &run_file
             - path: /tmp/run.sh
               contents: |-
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
-                SOURCE_COMMIT=c0c2e16826d1d2454323e16960ee351b2b0effcf
-                EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v1
+                SOURCE_COMMIT=732ac0b3b72da009c632027302953497255c78f3
+                EXPERIMENT=speedtuning-original-act-paper-baseline-20260822-v2
                 PERSIST_ROOT=/mnt/amlfs-04/home/linke/speedtuning-original-act/$EXPERIMENT
                 RUN=$PERSIST_ROOT/$TASK
                 DATASET=$RUN/dataset
@@ -68,6 +69,9 @@ workflow:
                 "$PYTHON" -m scripts.train_original_act \
                   --dataset-dir "$DATASET" --output-dir "$CHECKPOINTS" \
                   --num-epochs 2000 --batch-size 8 --seed 0 \
+                  --eval-task "$RUNTIME_TASK" --eval-output-dir "$RUN/training-eval" \
+                  --eval-seed-base "$MILESTONE_SEED_BASE" --eval-episodes 10 \
+                  --eval-epochs 500 1000 1500 1900 \
                   2>&1 | tee "$RUN/train.log"
                 test -s "$CHECKPOINTS/policy_best.ckpt"
                 test -s "$CHECKPOINTS/training_complete.json"
@@ -89,6 +93,7 @@ workflow:
                 collection = json.loads((run / "dataset/collection_summary.json").read_text())
                 training = json.loads((run / "checkpoints/training_complete.json").read_text())
                 evaluation = json.loads((run / "evaluation.json").read_text())
+                milestone_evaluation = json.loads((run / "training-eval/progress.json").read_text())
                 summary = {
                     "schema": "original-act-paper-baseline-v1",
                     "task": os.environ["RUNTIME_TASK"],
@@ -102,6 +107,7 @@ workflow:
                         "action": "absolute 14-D target joint positions",
                     },
                     "training": training,
+                    "milestone_evaluation": milestone_evaluation,
                     "config": {
                         "epochs": 2000, "batch_size": 8, "lr": 1e-5,
                         "kl_weight": 10, "chunk_size": 100,
@@ -135,6 +141,7 @@ workflow:
             RUNTIME_TASK: tea_bag
             TRAIN_SEED_BASE: "8200000"
             EVAL_SEED_BASE: "8250000"
+            MILESTONE_SEED_BASE: "8500000"
           files: *run_file
         - name: insertion
           image: *image
@@ -145,4 +152,5 @@ workflow:
             RUNTIME_TASK: insertion
             TRAIN_SEED_BASE: "8300000"
             EVAL_SEED_BASE: "8350000"
+            MILESTONE_SEED_BASE: "8600000"
           files: *run_file

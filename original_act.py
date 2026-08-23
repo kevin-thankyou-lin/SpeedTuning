@@ -80,13 +80,24 @@ def split_original_act_episodes(paths, seed=1, validation_count=None):
     return ([paths[i] for i in indices[:boundary]], [paths[i] for i in indices[boundary:]])
 
 
+def normalized_episode_progress(step, episode_len):
+    """Map an observation index to a stable [-1, 1] episode-progress feature."""
+
+    if episode_len < 2:
+        raise ValueError("episode_len must be at least two")
+    if not 0 <= step < episode_len:
+        raise ValueError("step must be inside the episode")
+    return np.float32(2.0 * step / (episode_len - 1) - 1.0)
+
+
 class OriginalACTDataset(Dataset):
     """One random observation and its padded absolute-action suffix per episode."""
 
-    def __init__(self, paths, stats, camera_names=("top",)):
+    def __init__(self, paths, stats, camera_names=("top",), include_progress=False):
         self.paths = tuple(map(Path, paths))
         self.stats = stats
         self.camera_names = tuple(camera_names)
+        self.include_progress = bool(include_progress)
 
     def __len__(self):
         return len(self.paths)
@@ -105,6 +116,10 @@ class OriginalACTDataset(Dataset):
         is_pad = np.zeros(episode_len, dtype=bool)
         is_pad[len(actions) :] = True
         qpos = (qpos - self.stats["qpos_mean"]) / self.stats["qpos_std"]
+        if self.include_progress:
+            qpos = np.concatenate(
+                [qpos, np.asarray([normalized_episode_progress(start, episode_len)])]
+            )
         padded = (padded - self.stats["action_mean"]) / self.stats["action_std"]
         return (
             torch.from_numpy(images.transpose(0, 3, 1, 2)).float() / 255.0,
@@ -114,10 +129,12 @@ class OriginalACTDataset(Dataset):
         )
 
 
-def create_original_act_policy(device=None):
+def create_original_act_policy(device=None, qpos_dim=None):
     from policy import ACTPolicy
 
     config = dict(ORIGINAL_ACT_CONFIG)
+    if qpos_dim is not None:
+        config["qpos_dim"] = int(qpos_dim)
     config["device"] = str(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     return ACTPolicy(config), config
 

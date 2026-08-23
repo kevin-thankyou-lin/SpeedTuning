@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from dm_control.rl import control
 
-from original_act import create_original_act_policy, set_seed
+from original_act import create_original_act_policy, normalized_episode_progress, set_seed
 from sim_env import make_sim_env
 from sim_tasks import get_task_spec, normalize_task_name
 
@@ -22,7 +22,7 @@ def _atomic_json(path, value):
     temporary.replace(path)
 
 
-def rollout(task, policy, stats, device, seed):
+def rollout(task, policy, stats, device, seed, progress_condition=False):
     episode_len = get_task_spec(task).episode_len
     env = make_sim_env(
         task,
@@ -41,6 +41,10 @@ def rollout(task, policy, stats, device, seed):
             for step in range(episode_len):
                 observation = timestep.observation
                 qpos = (np.asarray(observation["qpos"]) - stats["qpos_mean"]) / stats["qpos_std"]
+                if progress_condition:
+                    qpos = np.concatenate(
+                        [qpos, np.asarray([normalized_episode_progress(step, episode_len)])]
+                    )
                 image = np.asarray(observation["images"]["top"])
                 qpos_tensor = torch.as_tensor(qpos, dtype=torch.float32, device=device)[None]
                 image_tensor = torch.as_tensor(
@@ -82,11 +86,14 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--num-rollouts", type=int, default=50)
     parser.add_argument("--seed-base", type=int, default=1000)
+    parser.add_argument("--progress-condition", action="store_true")
     args = parser.parse_args()
     task = normalize_task_name(args.task)
     set_seed(1000)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    policy, _ = create_original_act_policy(device)
+    policy, _ = create_original_act_policy(
+        device, qpos_dim=15 if args.progress_condition else 14
+    )
     checkpoint = args.checkpoint_dir / args.checkpoint_name
     policy.load_state_dict(torch.load(checkpoint, map_location=device, weights_only=True))
     policy.to(device).eval()
@@ -96,7 +103,16 @@ def main():
     partial = args.output.with_suffix(args.output.suffix + ".partial")
     records = []
     for index in range(args.num_rollouts):
-        records.append(rollout(task, policy, stats, device, args.seed_base + index))
+        records.append(
+            rollout(
+                task,
+                policy,
+                stats,
+                device,
+                args.seed_base + index,
+                progress_condition=args.progress_condition,
+            )
+        )
         _atomic_json(partial, {"task": task, "rollouts": records})
         print(json.dumps({"completed": index + 1, "successes": sum(item["success"] for item in records)}), flush=True)
     report = {
@@ -107,6 +123,7 @@ def main():
         "successes": sum(item["success"] for item in records),
         "success_rate": float(np.mean([item["success"] for item in records])),
         "temporal_aggregation": {"enabled": True, "m": 0.01},
+        "progress_condition": bool(args.progress_condition),
         "rollouts": records,
     }
     _atomic_json(args.output, report)

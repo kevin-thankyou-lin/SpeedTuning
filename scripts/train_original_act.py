@@ -47,10 +47,27 @@ def _atomic_json(path, value):
     temporary.replace(path)
 
 
-def _evaluate_milestone(task, policy, stats, device, epoch, episodes, seed_base, output_dir):
+def _evaluate_milestone(
+    task,
+    policy,
+    stats,
+    device,
+    epoch,
+    episodes,
+    seed_base,
+    output_dir,
+    progress_condition=False,
+):
     policy.eval()
     records = [
-        rollout(task, policy, stats, device, seed_base + index)
+        rollout(
+            task,
+            policy,
+            stats,
+            device,
+            seed_base + index,
+            progress_condition=progress_condition,
+        )
         for index in range(episodes)
     ]
     result = {
@@ -73,6 +90,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--validation-episodes", type=int)
+    parser.add_argument("--progress-condition", action="store_true")
     parser.add_argument("--eval-task")
     parser.add_argument("--eval-output-dir", type=Path)
     parser.add_argument("--eval-seed-base", type=int)
@@ -104,7 +122,7 @@ def main():
         + "\n"
     )
     train_loader = DataLoader(
-        OriginalACTDataset(train_paths, stats),
+        OriginalACTDataset(train_paths, stats, include_progress=args.progress_condition),
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=True,
@@ -112,7 +130,7 @@ def main():
         prefetch_factor=1,
     )
     validation_loader = DataLoader(
-        OriginalACTDataset(validation_paths, stats),
+        OriginalACTDataset(validation_paths, stats, include_progress=args.progress_condition),
         batch_size=args.batch_size,
         shuffle=True,
         pin_memory=True,
@@ -122,7 +140,9 @@ def main():
 
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    policy, config = create_original_act_policy(device)
+    policy, config = create_original_act_policy(
+        device, qpos_dim=15 if args.progress_condition else 14
+    )
     policy.to(device)
     optimizer = policy.configure_optimizers()
     best = None
@@ -158,6 +178,7 @@ def main():
                 args.eval_episodes,
                 args.eval_seed_base,
                 args.eval_output_dir,
+                progress_condition=args.progress_condition,
             )
             milestone_results.append(milestone)
             _atomic_json(
@@ -186,6 +207,7 @@ def main():
                 "dataset_episodes": len(paths),
                 "train_episodes": len(train_paths),
                 "validation_episodes": len(validation_paths),
+                "progress_condition": bool(args.progress_condition),
             },
             indent=2,
         )

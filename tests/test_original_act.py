@@ -7,6 +7,7 @@ from original_act import (
     ORIGINAL_ACT_CONFIG,
     OriginalACTDataset,
     fit_original_act_stats,
+    normalized_episode_progress,
     split_original_act_episodes,
 )
 from scripts.collect_original_act_data import _existing_records, _summary
@@ -102,3 +103,20 @@ def test_original_collection_rejects_noncontiguous_resume(tmp_path):
         root.create_dataset("action", data=np.zeros((4, 14), dtype=np.float32))
     with pytest.raises(ValueError, match="contiguous"):
         _existing_records("pick_and_place", tmp_path, seed_base=100)
+
+
+def test_normalized_episode_progress_has_stable_endpoints():
+    assert normalized_episode_progress(0, 500) == np.float32(-1.0)
+    assert normalized_episode_progress(499, 500) == np.float32(1.0)
+    with pytest.raises(ValueError):
+        normalized_episode_progress(500, 500)
+
+
+def test_original_dataset_can_append_progress_feature(tmp_path, monkeypatch):
+    path = tmp_path / "episode_0.hdf5"
+    _episode(path, 0.0)
+    stats = fit_original_act_stats([path])
+    monkeypatch.setattr(np.random, "choice", lambda _: 2)
+    sample = OriginalACTDataset([path], stats, include_progress=True)[0]
+    assert sample[1].shape == (15,)
+    assert sample[1][-1].item() == pytest.approx(normalized_episode_progress(2, 4))

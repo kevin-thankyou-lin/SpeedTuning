@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-diagnose-insertion-20260824-v5
+  name: speedtuning-act-speed-diagnose-insertion-20260824-v6
   timeout:
     exec_timeout: 2h
     queue_timeout: 4h
@@ -36,6 +36,7 @@ workflow:
                 export MUJOCO_GL=egl
                 export PYOPENGL_PLATFORM=egl
                 export PYTHONUNBUFFERED=1
+                export CUBLAS_WORKSPACE_CONFIG=:4096:8
                 export OMP_NUM_THREADS=4
                 export MKL_NUM_THREADS=4
 

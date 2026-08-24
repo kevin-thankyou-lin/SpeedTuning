@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import pickle
 import sys
 from pathlib import Path
@@ -331,6 +332,7 @@ def main() -> int:
             "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
             "cuda_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
             "float32_matmul_precision": torch.get_float32_matmul_precision(),
+            "cublas_workspace_config": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
         },
         "checkpoint_sha256": sha256(checkpoint),
         "stats_sha256": sha256(stats_path),

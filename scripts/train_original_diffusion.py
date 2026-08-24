@@ -20,6 +20,12 @@ from original_diffusion import (
     OriginalDiffusionDataset,
     OriginalDiffusionPolicy,
 )
+from scripts.evaluate_original_diffusion import checkpoint_identity, rollout
+
+
+SPLIT_SEED = 1
+VALIDATION_SUBSET_SEED = 1
+VALIDATION_NOISE_SEED = 17
 
 
 def _atomic_json(path, value):
@@ -64,6 +70,64 @@ def deterministic_validation(model, loader, device, seed=0):
     return float(np.mean(losses))
 
 
+def _evaluate_milestone(
+    task,
+    model,
+    normalizer,
+    device,
+    update,
+    episodes,
+    seed_base,
+    camera_names,
+    output_dir,
+    checkpoint=None,
+):
+    model.eval()
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output = output_dir / f"update-{update:06d}.json"
+    partial = output.with_suffix(output.suffix + ".partial")
+    records = []
+    for index in range(episodes):
+        records.append(
+            rollout(
+                task,
+                model,
+                normalizer,
+                device,
+                seed_base + index,
+                tuple(camera_names),
+            )
+        )
+        _atomic_json(
+            partial,
+            {
+                "update": int(update),
+                "seed_base": int(seed_base),
+                "episodes": int(episodes),
+                "rollouts": records,
+            },
+        )
+    result = {
+        "schema": "original-diffusion-milestone-evaluation-v1",
+        "update": int(update),
+        "seed_base": int(seed_base),
+        "episodes": int(episodes),
+        "successes": sum(item["success"] for item in records),
+        "success_rate": float(np.mean([item["success"] for item in records])),
+        "replan_interval": int(model.action_horizon),
+        "prediction_horizon": int(model.prediction_horizon),
+        "observation_horizon": int(model.observation_horizon),
+        "rollouts": records,
+    }
+    if checkpoint is not None:
+        result["checkpoint"] = Path(checkpoint).name
+        result["checkpoint_sha256"] = checkpoint_identity(checkpoint)
+    _atomic_json(output, result)
+    partial.unlink(missing_ok=True)
+    return result
+
+
 def _checkpoint(path, model, ema, optimizer, scheduler, normalizer, config, update, validation):
     value = {
         "schema": "original-diffusion-checkpoint-v1",
@@ -98,16 +162,36 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--camera-names", nargs="+", default=("angle", "left_wrist", "right_wrist"))
     parser.add_argument("--no-pretrained-backbone", action="store_true")
+    parser.add_argument("--eval-task")
+    parser.add_argument("--eval-output-dir", type=Path)
+    parser.add_argument("--eval-seed-base", type=int)
+    parser.add_argument("--eval-episodes", type=int, default=20)
+    parser.add_argument("--eval-updates", type=int, nargs="+", default=())
     args = parser.parse_args()
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         raise FileExistsError(f"refusing to overwrite non-empty output: {args.output_dir}")
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    if args.eval_task:
+        if args.eval_output_dir is None or args.eval_seed_base is None or not args.eval_updates:
+            parser.error(
+                "--eval-task requires --eval-output-dir, --eval-seed-base, and --eval-updates"
+            )
+        if any(update < 1 or update > args.updates for update in args.eval_updates):
+            parser.error("--eval-updates must be inside the training update range")
+        if any(
+            update != args.updates and update % args.validation_every
+            for update in args.eval_updates
+        ):
+            parser.error("--eval-updates must coincide with deterministic validation updates")
+        args.eval_output_dir.mkdir(parents=True, exist_ok=True)
+    elif args.eval_output_dir is not None or args.eval_seed_base is not None or args.eval_updates:
+        parser.error("milestone evaluation arguments require --eval-task")
 
     paths = episode_paths(args.dataset_dir)
     if len(paths) != 270:
         raise ValueError(f"expected the exact 270 ACT episodes, found {len(paths)}")
     train_paths, validation_paths = split_original_act_episodes(
-        paths, seed=1, validation_count=args.validation_episodes
+        paths, seed=SPLIT_SEED, validation_count=args.validation_episodes
     )
     if (len(train_paths), len(validation_paths)) != (250, 20):
         raise ValueError("matched experiment requires exactly 250 train and 20 validation episodes")
@@ -116,11 +200,14 @@ def main():
         "schema": "original-diffusion-split-v1",
         "dataset_dir": str(args.dataset_dir.resolve()),
         "dataset_identity": _path_identity(paths),
+        "split_seed": SPLIT_SEED,
         "train": [path.name for path in train_paths],
         "validation": [path.name for path in validation_paths],
         "train_episodes": len(train_paths),
         "validation_episodes": len(validation_paths),
         "normalization_fit": "train episodes only; one global range per joint",
+        "training_sample_stride": ORIGINAL_DIFFUSION_CONFIG["action_horizon"],
+        "training_sample_semantics": "native steps 0, 8, 16, ... queried by the closed-loop evaluator",
     }
     _atomic_json(args.output_dir / "split.json", split)
     _atomic_json(
@@ -132,12 +219,21 @@ def main():
         **ORIGINAL_DIFFUSION_CONFIG,
         "camera_names": list(args.camera_names),
         "pretrained_backbone": not args.no_pretrained_backbone,
+        "training_sample_stride": ORIGINAL_DIFFUSION_CONFIG["action_horizon"],
     }
     train_dataset = OriginalDiffusionDataset(
-        train_paths, normalizer, camera_names=args.camera_names, image_size=config["image_size"]
+        train_paths,
+        normalizer,
+        camera_names=args.camera_names,
+        image_size=config["image_size"],
+        sample_stride=config["training_sample_stride"],
     )
     validation_dataset = OriginalDiffusionDataset(
-        validation_paths, normalizer, camera_names=args.camera_names, image_size=config["image_size"]
+        validation_paths,
+        normalizer,
+        camera_names=args.camera_names,
+        image_size=config["image_size"],
+        sample_stride=config["training_sample_stride"],
     )
     loader_generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
@@ -150,7 +246,7 @@ def main():
         pin_memory=True,
         drop_last=True,
     )
-    validation_indices = np.random.RandomState(1).choice(
+    validation_indices = np.random.RandomState(VALIDATION_SUBSET_SEED).choice(
         len(validation_dataset),
         size=min(len(validation_dataset), args.validation_batches * args.batch_size),
         replace=False,
@@ -181,6 +277,8 @@ def main():
     iterator = iter(train_loader)
     best = None
     history = []
+    milestone_results = []
+    milestone_updates = set(args.eval_updates)
     for update in range(1, args.updates + 1):
         try:
             image, qpos, actions, is_pad = next(iterator)
@@ -199,7 +297,9 @@ def main():
         scheduler.step()
         ema.update(model)
         if update == 1 or update % args.validation_every == 0 or update == args.updates:
-            validation = deterministic_validation(ema.model, validation_loader, device, seed=17)
+            validation = deterministic_validation(
+                ema.model, validation_loader, device, seed=VALIDATION_NOISE_SEED
+            )
             record = {
                 "update": update,
                 "train_loss": float(loss.detach().cpu()),
@@ -215,6 +315,45 @@ def main():
                 best = (validation, update)
                 _checkpoint(args.output_dir / "policy_best.pt", model, ema, optimizer, scheduler, normalizer, config, update, validation)
             _atomic_json(args.output_dir / "history.json", history)
+        if args.eval_task and update in milestone_updates:
+            milestone_checkpoint = args.output_dir / f"policy_update_{update:06d}.pt"
+            if not milestone_checkpoint.exists():
+                _checkpoint(
+                    milestone_checkpoint,
+                    model,
+                    ema,
+                    optimizer,
+                    scheduler,
+                    normalizer,
+                    config,
+                    update,
+                    validation,
+                )
+            result = _evaluate_milestone(
+                args.eval_task,
+                ema.model,
+                normalizer,
+                device,
+                update,
+                args.eval_episodes,
+                args.eval_seed_base,
+                config["camera_names"],
+                args.eval_output_dir,
+                checkpoint=milestone_checkpoint,
+            )
+            milestone_results.append(result)
+            _atomic_json(
+                args.eval_output_dir / "progress.json",
+                {
+                    "schema": "original-diffusion-inline-training-eval-v1",
+                    "task": args.eval_task,
+                    "seed_base": args.eval_seed_base,
+                    "episodes_per_update": args.eval_episodes,
+                    "requested_updates": list(args.eval_updates),
+                    "results": milestone_results,
+                },
+            )
+            print(json.dumps({"milestone_evaluation": result}), flush=True)
 
     _checkpoint(
         args.output_dir / "policy_last.pt",
@@ -236,6 +375,20 @@ def main():
             "best_update": best[1],
             "split": split,
             "config": config,
+            "seeds": {
+                "training": args.seed,
+                "loader": args.seed,
+                "split": SPLIT_SEED,
+                "validation_subset": VALIDATION_SUBSET_SEED,
+                "validation_noise": VALIDATION_NOISE_SEED,
+            },
+            "milestone_evaluation": {
+                "task": args.eval_task,
+                "seed_base": args.eval_seed_base,
+                "episodes_per_update": args.eval_episodes if args.eval_task else 0,
+                "requested_updates": list(args.eval_updates),
+                "completed_updates": [item["update"] for item in milestone_results],
+            },
         },
     )
 

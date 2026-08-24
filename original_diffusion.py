@@ -115,7 +115,7 @@ class JointRangeNormalizer:
 
 
 class OriginalDiffusionDataset(Dataset):
-    """Every native-rate timestep as a standard 16/2/8 DP sequence."""
+    """Aligned HDF5 timesteps as standard 16/2/8 DP sequences."""
 
     def __init__(
         self,
@@ -125,6 +125,7 @@ class OriginalDiffusionDataset(Dataset):
         prediction_horizon=16,
         observation_horizon=2,
         image_size=(120, 160),
+        sample_stride=1,
     ):
         self.paths = tuple(map(Path, paths))
         self.normalizer = normalizer
@@ -132,15 +133,20 @@ class OriginalDiffusionDataset(Dataset):
         self.prediction_horizon = int(prediction_horizon)
         self.observation_horizon = int(observation_horizon)
         self.image_size = tuple(map(int, image_size))
+        self.sample_stride = int(sample_stride)
         if self.observation_horizon != 2:
             raise ValueError("the matched baseline requires observation_horizon=2")
+        if self.sample_stride < 1:
+            raise ValueError("sample_stride must be positive")
         self.indices = []
         for path_index, path in enumerate(self.paths):
             with h5py.File(path, "r") as root:
                 length = int(root["action"].shape[0])
                 if set(root["observations/images"]) != set(self.camera_names):
                     raise ValueError(f"camera contract mismatch in {path}")
-            self.indices.extend((path_index, step) for step in range(length))
+            self.indices.extend(
+                (path_index, step) for step in range(0, length, self.sample_stride)
+            )
 
     def __len__(self):
         return len(self.indices)
@@ -232,6 +238,13 @@ class OriginalDiffusionPolicy(nn.Module):
         self.observation_horizon = int(self.config["observation_horizon"])
         self.action_horizon = int(self.config["action_horizon"])
         self.num_inference_steps = int(self.config["num_inference_steps"])
+        training_stride = int(
+            self.config.get("training_sample_stride", self.action_horizon)
+        )
+        if training_stride != self.action_horizon:
+            raise ValueError(
+                "training_sample_stride must match action_horizon for executable-state training"
+            )
         self.observation_encoder = MultiviewObservationEncoder(
             qpos_dim=int(self.config["qpos_dim"]),
             camera_count=len(self.config["camera_names"]),

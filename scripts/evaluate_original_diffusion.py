@@ -18,6 +18,9 @@ from sim_env import make_sim_env
 from sim_tasks import get_task_spec, normalize_task_name
 
 
+ROLLOUT_DIFFUSION_SEED_OFFSET = 10_000_019
+
+
 def _atomic_json(path, value):
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2) + "\n")
@@ -50,19 +53,20 @@ def _observation_tensors(history, normalizer, camera_names, device):
         qposes.append(np.concatenate((qpos, [normalized_episode_progress(step, episode_len)])))
     image = np.stack(images).transpose(0, 1, 4, 2, 3).copy()
     return (
-        torch.as_tensor(qposes, dtype=torch.float32, device=device)[None],
+        torch.as_tensor(np.stack(qposes), dtype=torch.float32, device=device)[None],
         torch.as_tensor(image, dtype=torch.float32, device=device)[None] / 255,
     )
 
 
-def rollout(task, policy, normalizer, device, seed, camera_names):
+def rollout(task, policy, normalizer, device, seed, camera_names, object_pose=None):
     episode_len = get_task_spec(task).episode_len
     env = make_sim_env(
         task,
         render_images=True,
         render_camera_names=camera_names,
         seed=int(seed),
-        randomize_object_pose=True,
+        object_pose=object_pose,
+        randomize_object_pose=object_pose is None,
     )
     maximum_reward = 0
     try:
@@ -70,7 +74,9 @@ def rollout(task, policy, normalizer, device, seed, camera_names):
         history = deque(maxlen=policy.observation_horizon)
         history.append((timestep.observation, 0, episode_len))
         history.append((timestep.observation, 0, episode_len))
-        generator = torch.Generator(device=device).manual_seed(int(seed) + 10_000_019)
+        generator = torch.Generator(device=device).manual_seed(
+            int(seed) + ROLLOUT_DIFFUSION_SEED_OFFSET
+        )
         step = 0
         with torch.inference_mode():
             while step < episode_len:
@@ -122,6 +128,10 @@ def main():
         "seed_base": args.seed_base,
         "episodes": args.num_rollouts,
         "camera_names": list(camera_names),
+        "policy_sampling_seed": {
+            "rule": "environment seed plus fixed offset",
+            "offset": ROLLOUT_DIFFUSION_SEED_OFFSET,
+        },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     partial = args.output.with_suffix(args.output.suffix + ".partial")
@@ -145,6 +155,8 @@ def main():
         "replan_interval": policy.action_horizon,
         "prediction_horizon": policy.prediction_horizon,
         "observation_horizon": policy.observation_horizon,
+        "observation_history": "two consecutive native observations; reset observation repeated at boundary",
+        "action_window": "predict t-1 through t+14; execute t through t+7; then replan",
         "rollouts": records,
     }
     _atomic_json(args.output, report)

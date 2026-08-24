@@ -4,6 +4,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
+from original_act import episode_paths, split_original_act_episodes
 from original_diffusion import (
     JointRangeNormalizer,
     ModelEMA,
@@ -12,18 +13,40 @@ from original_diffusion import (
     OriginalDiffusionPolicy,
 )
 from scripts.evaluate_original_diffusion import checkpoint_identity
-from scripts.train_original_diffusion import cosine_warmup_multiplier, deterministic_validation
+from scripts.smoke_original_diffusion import _matched_smoke_contract, _successful_episode
+from scripts.train_original_diffusion import (
+    _evaluate_milestone,
+    cosine_warmup_multiplier,
+    deterministic_validation,
+)
 
 
 CAMERAS = ("angle", "left_wrist", "right_wrist")
 
 
-def _episode(path, length=20, camera_names=CAMERAS, offset=0):
+def _episode(
+    path,
+    length=20,
+    camera_names=CAMERAS,
+    offset=0,
+    *,
+    seed=0,
+    source_success=True,
+    replay_success=True,
+    task="pick_and_place",
+):
     qpos = np.arange(length * 14, dtype=np.float32).reshape(length, 14) / 100 + offset
     action = qpos + np.arange(14, dtype=np.float32) / 10 + 0.25
     with h5py.File(path, "w") as root:
+        root.attrs.update(
+            seed=seed,
+            source_success=source_success,
+            replay_success=replay_success,
+            task=task,
+        )
         root.create_dataset("observations/qpos", data=qpos)
         root.create_dataset("action", data=action)
+        root.create_dataset("object_pose", data=np.arange(7, dtype=np.float64) + seed)
         images = root.create_group("observations/images")
         for camera_index, name in enumerate(camera_names):
             images.create_dataset(
@@ -87,6 +110,73 @@ def test_dataset_fails_closed_on_camera_mismatch(tmp_path):
     normalizer = JointRangeNormalizer.fit([path])
     with pytest.raises(ValueError, match="camera contract mismatch"):
         OriginalDiffusionDataset([path], normalizer)
+
+
+def test_dataset_stride_selects_only_executable_replan_states(tmp_path):
+    path = tmp_path / "episode_0.hdf5"
+    _, action = _episode(path, length=20)
+    normalizer = JointRangeNormalizer.fit([path])
+    dataset = OriginalDiffusionDataset(
+        [path], normalizer, image_size=(12, 16), sample_stride=8
+    )
+    assert dataset.indices == [(0, 0), (0, 8), (0, 16)]
+    _, _, target, is_pad = dataset[1]
+    np.testing.assert_allclose(
+        normalizer.denormalize_action(target.numpy())[1], action[8], atol=2e-6
+    )
+    assert not is_pad[1]
+    with pytest.raises(ValueError, match="sample_stride must be positive"):
+        OriginalDiffusionDataset([path], normalizer, sample_stride=0)
+
+
+@pytest.mark.learned
+def test_policy_fails_closed_on_training_execution_stride_mismatch():
+    with pytest.raises(ValueError, match="training_sample_stride must match action_horizon"):
+        OriginalDiffusionPolicy(
+            {
+                "pretrained_backbone": False,
+                "action_horizon": 8,
+                "training_sample_stride": 4,
+            }
+        )
+
+
+def test_smoke_episode_is_selected_only_from_training_partition(tmp_path):
+    paths = []
+    for index in range(270):
+        path = tmp_path / f"episode_{index}.hdf5"
+        _episode(
+            path,
+            length=2,
+            seed=1000 + index,
+            source_success=False,
+            replay_success=False,
+        )
+        paths.append(path)
+    paths = episode_paths(tmp_path)
+    train_paths, validation_paths = split_original_act_episodes(
+        paths, seed=1, validation_count=20
+    )
+    validation_success = validation_paths[0]
+    with h5py.File(validation_success, "r+") as root:
+        root.attrs["source_success"] = True
+        root.attrs["replay_success"] = True
+    with pytest.raises(ValueError, match="no successful"):
+        _successful_episode(train_paths)
+
+    training_success = train_paths[-1]
+    with h5py.File(training_success, "r+") as root:
+        root.attrs["source_success"] = True
+        root.attrs["replay_success"] = True
+    all_paths, actual_train, actual_validation, episode = _matched_smoke_contract(tmp_path)
+    assert all_paths == paths
+    assert actual_train == train_paths
+    assert actual_validation == validation_paths
+    assert episode[0] == training_success
+    assert episode[1] == 1000 + int(training_success.stem.removeprefix("episode_"))
+    np.testing.assert_array_equal(
+        episode[3], np.arange(7, dtype=np.float64) + episode[1]
+    )
 
 
 @pytest.mark.learned
@@ -154,3 +244,41 @@ def test_cosine_warmup_and_checkpoint_identity(tmp_path):
     assert initial == checkpoint_identity(path)
     path.write_bytes(b"changed")
     assert initial != checkpoint_identity(path)
+
+
+def test_milestone_evaluation_preserves_exact_seed_order(monkeypatch, tmp_path):
+    observed = []
+
+    def fake_rollout(task, model, normalizer, device, seed, camera_names):
+        observed.append((task, seed, camera_names))
+        return {"seed": seed, "success": seed % 2 == 0, "steps": 7, "max_reward": 4}
+
+    monkeypatch.setattr("scripts.train_original_diffusion.rollout", fake_rollout)
+
+    class Model:
+        action_horizon = 8
+        prediction_horizon = 16
+        observation_horizon = 2
+
+        def eval(self):
+            return self
+
+    result = _evaluate_milestone(
+        "pick_and_place",
+        Model(),
+        object(),
+        torch.device("cpu"),
+        update=25_000,
+        episodes=3,
+        seed_base=9_400_000,
+        camera_names=CAMERAS,
+        output_dir=tmp_path,
+    )
+    assert observed == [
+        ("pick_and_place", 9_400_000 + index, CAMERAS) for index in range(3)
+    ]
+    assert result["successes"] == 2
+    assert result["success_rate"] == pytest.approx(2 / 3)
+    assert result["replan_interval"] == 8
+    assert (tmp_path / "update-025000.json").exists()
+    assert not (tmp_path / "update-025000.json.partial").exists()

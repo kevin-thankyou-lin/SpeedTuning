@@ -11,7 +11,7 @@ workflow:
     queue_timeout: 12h
   resources:
     default:
-      cpu: 16
+      cpu: 15
       gpu: 1
       memory: 96Gi
       platform: ovx-l40

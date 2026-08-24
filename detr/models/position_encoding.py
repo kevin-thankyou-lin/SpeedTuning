@@ -30,18 +30,9 @@ class PositionEmbeddingSine(nn.Module):
         # assert mask is not None
         # not_mask = ~mask
 
-        # ACT always supplies a dense rectangular camera tensor here; there is
-        # no padding mask.  The historical cumsum of ones is exactly the
-        # one-indexed coordinate grid, but CUDA cumsum has no certified
-        # deterministic implementation.  Construct the identical grid
-        # directly so frozen inference can enforce deterministic algorithms.
-        batch, _, height, width = x.shape
-        y_embed = torch.arange(
-            1, height + 1, dtype=torch.float32, device=x.device
-        ).view(1, height, 1).expand(batch, height, width)
-        x_embed = torch.arange(
-            1, width + 1, dtype=torch.float32, device=x.device
-        ).view(1, 1, width).expand(batch, height, width)
+        not_mask = torch.ones_like(x[0, [0]])
+        y_embed = not_mask.cumsum(1, dtype=torch.float32)
+        x_embed = not_mask.cumsum(2, dtype=torch.float32)
         if self.normalize:
             eps = 1e-6
             y_embed = y_embed / (y_embed[:, -1:, :] + eps) * self.scale

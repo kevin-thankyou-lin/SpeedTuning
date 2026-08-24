@@ -4,42 +4,12 @@ import numpy as np
 import pytest
 import torch
 
-from act_integration import (
-    OriginalACTSpeedAdapter,
-    _resolve_stats,
-    configure_act_inference_determinism,
-)
+from act_integration import OriginalACTSpeedAdapter, _resolve_stats
 from chunked_policy import ChunkPredictorAdapter
 from policy_speed_env import ChunkedActionSource, create_speed_env
 
 
 CAMERAS = ("angle", "left_wrist", "right_wrist")
-
-
-def test_cuda_determinism_requires_preregistered_cublas_workspace(monkeypatch):
-    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
-
-    with pytest.raises(RuntimeError, match="CUBLAS_WORKSPACE_CONFIG"):
-        configure_act_inference_determinism("cuda")
-
-
-def test_deterministic_inference_contract_is_receipted(monkeypatch):
-    previous_algorithms = torch.are_deterministic_algorithms_enabled()
-    previous_benchmark = torch.backends.cudnn.benchmark
-    previous_cudnn = torch.backends.cudnn.deterministic
-    monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
-    try:
-        receipt = configure_act_inference_determinism("cuda")
-        assert receipt["enabled"] is True
-        assert receipt["scope"] == "torch_strict"
-        assert receipt["cublas_workspace_config"] == ":4096:8"
-        assert receipt["deterministic_algorithms"] is True
-        assert receipt["cudnn_deterministic"] is True
-        assert receipt["cudnn_benchmark"] is False
-    finally:
-        torch.use_deterministic_algorithms(previous_algorithms)
-        torch.backends.cudnn.benchmark = previous_benchmark
-        torch.backends.cudnn.deterministic = previous_cudnn
 
 
 def test_resolved_stats_preserve_serialized_float64_dtype():

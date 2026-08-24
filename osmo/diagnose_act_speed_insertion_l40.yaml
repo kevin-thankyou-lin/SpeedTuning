@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-diagnose-insertion-20260824-v6
+  name: speedtuning-act-speed-diagnose-insertion-20260824-v7
   timeout:
     exec_timeout: 2h
     queue_timeout: 4h
@@ -36,7 +36,6 @@ workflow:
                 export MUJOCO_GL=egl
                 export PYOPENGL_PLATFORM=egl
                 export PYTHONUNBUFFERED=1
-                export CUBLAS_WORKSPACE_CONFIG=:4096:8
                 export OMP_NUM_THREADS=4
                 export MKL_NUM_THREADS=4
 
@@ -50,12 +49,11 @@ workflow:
                 uv python install 3.10
                 uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
                 .venv/bin/python -m pytest -q tests/test_original_act_speed_adapter.py \
-                  tests/test_act_position_encoding.py \
                   2>&1 | tee "$OUTPUT/pytest.log"
                 test ! -e "$RUN/diagnostic.json"
                 .venv/bin/python scripts/diagnose_act_speed_parity.py \
                   --task insertion --checkpoint-root "$ROOT" --seed 9350040 \
-                  --device cuda --deterministic --output "$RUN/diagnostic.json" \
+                  --device cuda --output "$RUN/diagnostic.json" \
                   --traces "$RUN/traces.npz" \
                   2>&1 | tee "$OUTPUT/diagnostic.log"
                 sha256sum "$RUN/diagnostic.json" "$RUN/traces.npz"

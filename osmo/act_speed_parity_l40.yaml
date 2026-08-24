@@ -3,7 +3,7 @@ default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
   task_label: pick
 workflow:
-  name: speedtuning-act-speed-parity-{{ task_label }}-20260824-v3
+  name: speedtuning-act-speed-parity-{{ task_label }}-20260824-v4
   timeout:
     exec_timeout: 12h
     queue_timeout: 4h
@@ -40,7 +40,6 @@ workflow:
                 export PYOPENGL_PLATFORM=egl
                 export MPLBACKEND=Agg
                 export PYTHONUNBUFFERED=1
-                export CUBLAS_WORKSPACE_CONFIG=:4096:8
                 export OMP_NUM_THREADS=4
                 export MKL_NUM_THREADS=4
                 export TOKENIZERS_PARALLELISM=false
@@ -57,7 +56,6 @@ workflow:
                 uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
                 .venv/bin/python -m pytest -q \
                   tests/test_original_act_speed_adapter.py \
-                  tests/test_act_position_encoding.py \
                   tests/test_speed_infrastructure.py \
                   2>&1 | tee "$OUTPUT/pytest.log"
                 .venv/bin/python scripts/run_act_speed_parity.py \

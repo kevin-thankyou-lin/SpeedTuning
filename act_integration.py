@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import pickle
 from pathlib import Path
 
@@ -15,38 +14,6 @@ from sim_tasks import get_task_spec, normalize_task_name
 
 
 REQUIRED_STATS = ("qpos_mean", "qpos_std", "action_mean", "action_std")
-DETERMINISTIC_CUBLAS_CONFIGS = (":4096:8", ":16:8")
-
-
-def configure_act_inference_determinism(device="cuda"):
-    """Enable and describe the frozen deterministic ACT inference runtime."""
-
-    try:
-        import torch
-    except ImportError as exc:
-        raise RuntimeError("ACT integration requires: uv sync --extra learned") from exc
-    resolved = torch.device(device)
-    workspace = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
-    if resolved.type == "cuda" and workspace not in DETERMINISTIC_CUBLAS_CONFIGS:
-        raise RuntimeError(
-            "deterministic CUDA ACT inference requires "
-            "CUBLAS_WORKSPACE_CONFIG=:4096:8 or :16:8 before Python starts"
-        )
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
-    torch.use_deterministic_algorithms(True)
-    return {
-        "enabled": True,
-        "scope": "torch_strict",
-        "cublas_workspace_config": workspace,
-        "cudnn_benchmark": torch.backends.cudnn.benchmark,
-        "cudnn_deterministic": torch.backends.cudnn.deterministic,
-        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
-        "cuda_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
-        "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
-        "float32_matmul_precision": torch.get_float32_matmul_precision(),
-        "dense_position_grid": "one_indexed_arange_equivalent_to_cumsum_of_ones",
-    }
 
 
 def _load_mapping(path):

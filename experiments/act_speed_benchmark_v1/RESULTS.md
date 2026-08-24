@@ -3,7 +3,11 @@
 The table reports the untouched 50-state final banks. `FSS mean` and `Native
 mean` are successful-rollout-only first-success physics steps. `Speedup` is
 `Native mean / FSS mean`. Every task uses one shared matched native reference
-on its final states.
+on its final states. The `Safety` and `Physics` columns are final-bank counts;
+all final and native banks were clean. Across the separate search banks there
+was one physics error, in Tea `sail_inspired_adaptive`, and zero safety
+violations. That search incident makes the Tea SAIL-inspired candidate
+non-deployable despite its clean 49/50 final result.
 
 Path aliases used below:
 
@@ -52,15 +56,19 @@ Path aliases used below:
   temporal-ensemble receipts. Its run-manifest SHA-256 is
   `198880f243272aa4cdfe2a7bb9378701900157c5a56322f3e0c7f9b73c7077ee`.
 - Independent audit workflow:
-  `speedtuning-act-speed-audit-20260824-v1-2` (`COMPLETED`, exit 0).
+  `speedtuning-act-speed-audit-20260824-v2-3` (`COMPLETED`, exit 0).
 - Audit JSON:
-  `/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1/reports/b43965fedbaf02e19134add8fd50088d920f3206/audit.json`
-  (SHA-256 `674c3a966f5350e76f1899c569c014a29534122c5c67d16b72791ee5801c660e`).
+  `/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1/reports/17ad53b81bd99cc67fb6403ca1825f6dd430281a/audit.json`
+  (SHA-256 `186f496dae00482358eaccf30918c8ccad63941d6ba1e503c7bf03170dca4225`).
+  Its rendered `RESULTS.md` SHA-256 is
+  `754ef346e257d628c0183d1d08047fdb7aca409ae2cd4b381721c15e7d23d279`.
 - The audit validated 900 registered search receipts, 900 untouched method
   final receipts, and 150 shared native receipts. It checked exact seed sets,
   search/final disjointness, identity hashes, manifests, immutable selection
   hashes, completion hashes, detector boundaries, controller receipts, and
-  global duplicate absence.
+  global duplicate absence. Aggregate incidents were zero safety violations
+  and one physics error across search, final, and native receipts; the sole
+  physics error was the Tea SAIL-inspired search incident noted above.
 - The three `learned_phase_subtask` searches preserve their first 20 receipts
   from source `298c6d1` by origin path and SHA-256 and record
   `rollouts_reexecuted: false`; source `866c9f4` ran only the remaining 30.

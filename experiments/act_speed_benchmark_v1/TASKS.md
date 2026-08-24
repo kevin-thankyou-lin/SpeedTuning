@@ -65,9 +65,10 @@ the only common reliability estimate across all methods.
 - [x] Link every aggregate to its manifest and per-state receipts.
 
 Terminal evidence is recorded in [RESULTS.md](RESULTS.md). The independent
-audit workflow `speedtuning-act-speed-audit-20260824-v1-2` completed with exit
+audit workflow `speedtuning-act-speed-audit-20260824-v2-3` completed with exit
 0 after validating all 1,950 registered search, method-final, and native
-receipts.
+receipts, including the single Tea SAIL-inspired search physics error and zero
+safety violations.
 
 The Diffusion Policy implementation/training is a separate matched study and
 must not block ACT speed benchmarking after Stage 1 parity passes.

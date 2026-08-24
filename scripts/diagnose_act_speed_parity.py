@@ -52,6 +52,7 @@ def trace_retained(task, policy, stats, device, seed):
     qpos = []
     states = []
     rewards = []
+    model_qpos = []
     try:
         timestep = env.reset()
         all_time_actions = torch.zeros(
@@ -73,6 +74,7 @@ def trace_retained(task, policy, stats, device, seed):
                         ),
                     ]
                 )
+                model_qpos.append(normalized_qpos.copy())
                 image = np.stack(
                     [observation["images"][name] for name in CAMERAS]
                 )
@@ -104,6 +106,7 @@ def trace_retained(task, policy, stats, device, seed):
             "qpos": np.stack(qpos),
             "states": np.stack(states),
             "rewards": np.asarray(rewards),
+            "model_qpos": np.stack(model_qpos),
             "max_reward": max(rewards),
         }
     finally:
@@ -123,6 +126,7 @@ def trace_adapter(task, adapter, seed):
     qpos = []
     states = []
     rewards = []
+    model_qpos = []
     try:
         timestep = env.reset()
         adapter.reset()
@@ -130,6 +134,24 @@ def trace_adapter(task, adapter, seed):
             observation = timestep.observation
             qpos.append(np.asarray(observation["qpos"]).copy())
             states.append(np.asarray(observation["env_state"]).copy())
+            normalized_qpos = (
+                np.asarray(observation["qpos"]) - adapter.qpos_mean
+            ) / adapter.qpos_std
+            model_qpos.append(
+                np.concatenate(
+                    [
+                        normalized_qpos,
+                        np.asarray(
+                            [
+                                normalized_episode_progress(
+                                    adapter.policy_time, adapter.episode_len
+                                )
+                            ],
+                            dtype=np.float32,
+                        ),
+                    ]
+                )
+            )
             action = adapter.action(observation, speed=1.0)
             actions.append(np.asarray(action).copy())
             timestep = env.step(action)
@@ -139,6 +161,7 @@ def trace_adapter(task, adapter, seed):
             "qpos": np.stack(qpos),
             "states": np.stack(states),
             "rewards": np.asarray(rewards),
+            "model_qpos": np.stack(model_qpos),
             "max_reward": max(rewards),
         }
     finally:
@@ -159,6 +182,78 @@ def comparison(left, right):
             else float(np.max(np.abs(left[first] - right[first])))
         ),
     }
+
+
+def initial_probe(task, seed, retained_policy, adapter, stats, device):
+    env = make_sim_env(
+        task,
+        render_images=True,
+        render_camera_names=CAMERAS,
+        seed=seed,
+        randomize_object_pose=True,
+    )
+    try:
+        observation = env.reset().observation
+        retained_qpos = (
+            np.asarray(observation["qpos"]) - stats["qpos_mean"]
+        ) / stats["qpos_std"]
+        retained_qpos = np.concatenate(
+            [retained_qpos, np.asarray([normalized_episode_progress(0, get_task_spec(task).episode_len)])]
+        )
+        adapter_qpos = (
+            np.asarray(observation["qpos"]) - adapter.qpos_mean
+        ) / adapter.qpos_std
+        adapter_qpos = np.concatenate(
+            [adapter_qpos, np.asarray([normalized_episode_progress(0, adapter.episode_len)], dtype=np.float32)]
+        )
+        images = np.stack(
+            [observation["images"][name] for name in CAMERAS]
+        ).transpose(0, 3, 1, 2).copy()
+        retained_tensor = torch.as_tensor(
+            retained_qpos, dtype=torch.float32, device=device
+        )[None]
+        adapter_tensor = torch.as_tensor(
+            adapter_qpos, dtype=torch.float32, device=device
+        )[None]
+        image_tensor = torch.as_tensor(
+            images, dtype=torch.float32, device=device
+        )[None] / 255.0
+        with torch.inference_mode():
+            retained_chunk = retained_policy(retained_tensor, image_tensor)[0]
+            retained_repeat = retained_policy(retained_tensor, image_tensor)[0]
+            adapter_chunk = adapter.model(adapter_tensor, image_tensor)[0]
+            adapter_repeat = adapter.model(adapter_tensor, image_tensor)[0]
+        retained_state = retained_policy.state_dict()
+        adapter_state = adapter.model.state_dict()
+        state_keys_equal = tuple(retained_state) == tuple(adapter_state)
+        state_values_equal = state_keys_equal and all(
+            torch.equal(retained_state[key], adapter_state[key])
+            for key in retained_state
+        )
+        return {
+            "numpy_qpos": comparison(retained_qpos[None], adapter_qpos[None]),
+            "torch_qpos": comparison(
+                retained_tensor.detach().cpu().numpy(),
+                adapter_tensor.detach().cpu().numpy(),
+            ),
+            "state_dict_keys_equal": state_keys_equal,
+            "state_dict_values_equal": state_values_equal,
+            "retained_repeat_chunk": comparison(
+                retained_chunk.detach().cpu().numpy()[None],
+                retained_repeat.detach().cpu().numpy()[None],
+            ),
+            "adapter_repeat_chunk": comparison(
+                adapter_chunk.detach().cpu().numpy()[None],
+                adapter_repeat.detach().cpu().numpy()[None],
+            ),
+            "cross_model_chunk": comparison(
+                retained_chunk.detach().cpu().numpy()[None],
+                adapter_chunk.detach().cpu().numpy()[None],
+            ),
+            "first_images_sha256": hashlib.sha256(images.tobytes()).hexdigest(),
+        }
+    finally:
+        env.close()
 
 
 def main() -> int:
@@ -198,6 +293,9 @@ def main() -> int:
         temporal_ensemble_m=0.01,
         device=args.device,
     )
+    probe = initial_probe(
+        task, args.seed, retained_policy, adapter, stats, device
+    )
     adapted = trace_adapter(task, adapter, args.seed)
 
     args.traces.parent.mkdir(parents=True, exist_ok=True)
@@ -211,6 +309,8 @@ def main() -> int:
         adapter_states=adapted["states"],
         retained_rewards=retained["rewards"],
         adapter_rewards=adapted["rewards"],
+        retained_model_qpos=retained["model_qpos"],
+        adapter_model_qpos=adapted["model_qpos"],
     )
     report = {
         "schema": "act-speed-parity-diagnostic-v1",
@@ -227,7 +327,11 @@ def main() -> int:
         },
         "retained_max_reward": retained["max_reward"],
         "adapter_max_reward": adapted["max_reward"],
+        "initial_probe": probe,
         "actions": comparison(retained["actions"], adapted["actions"]),
+        "model_qpos": comparison(
+            retained["model_qpos"], adapted["model_qpos"]
+        ),
         "qpos": comparison(retained["qpos"], adapted["qpos"]),
         "states": comparison(retained["states"], adapted["states"]),
         "rewards": comparison(

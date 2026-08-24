@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-diagnose-insertion-20260824-v1
+  name: speedtuning-act-speed-diagnose-insertion-20260824-v2
   timeout:
     exec_timeout: 2h
     queue_timeout: 4h

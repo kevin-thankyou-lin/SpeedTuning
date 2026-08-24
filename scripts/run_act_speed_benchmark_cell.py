@@ -26,6 +26,7 @@ from act_integration import build_original_act_speed_adapter  # noqa: E402
 from act_speed_benchmark import (  # noqa: E402
     METHODS,
     PHASE_METHODS,
+    JointEffectorObservationWrapper,
     SWEEP_METHODS,
     SPEED_VALUES,
     build_offline_artifact,
@@ -174,7 +175,7 @@ class CellRuntime:
             reward = make_speed_reward(
                 config["success_bonus"], config["speed_weight"], config["speed_power"]
             )
-        return create_speed_env(
+        environment = create_speed_env(
             task_name=self.task["task"],
             reward_fn=reward,
             chunk_predictor=self.adapter,
@@ -187,6 +188,12 @@ class CellRuntime:
             terminate_on_success=False,
             safety_monitor=partial(workspace_violation, self.task["task"]),
         )
+        if phase:
+            environment.env = JointEffectorObservationWrapper(environment.env)
+            environment._environment_metadata["learned_phase_effector_source"] = (
+                "joint_fk_body_xpos"
+            )
+        return environment
 
 
 def prepare(args):

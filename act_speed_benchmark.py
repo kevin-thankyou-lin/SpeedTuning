@@ -46,6 +46,38 @@ SPEED_VALUES = (1.0, 1.25, 1.5, 1.75, 2.0)
 PROFILE_BINS = 20
 
 
+class JointEffectorObservationWrapper:
+    """Add causal FK effector positions to joint-control observations."""
+
+    BODY_NAMES = {
+        "left": "vx300s_left/gripper_link",
+        "right": "vx300s_right/gripper_link",
+    }
+
+    def __init__(self, environment):
+        self.environment = environment
+
+    def _augment(self, timestep):
+        observation = dict(timestep.observation)
+        for side, body in self.BODY_NAMES.items():
+            observation[f"effector_position_{side}"] = np.asarray(
+                self.environment.physics.named.data.xpos[body], dtype=np.float64
+            ).copy()
+        return timestep._replace(observation=observation)
+
+    def reset(self):
+        return self._augment(self.environment.reset())
+
+    def step(self, action):
+        return self._augment(self.environment.step(action))
+
+    def close(self):
+        return self.environment.close()
+
+    def __getattr__(self, name):
+        return getattr(self.environment, name)
+
+
 def canonical_sha256(value) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()

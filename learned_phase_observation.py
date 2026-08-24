@@ -110,10 +110,19 @@ class LearnedPhaseEncoder:
         self.phase_index = 0
 
     def _proprio(self, observation):
-        effectors = {
-            side: np.asarray(observation[f"mocap_pose_{side}"], dtype=np.float64)[:3]
-            for side in ("left", "right")
-        }
+        effectors = {}
+        for side in ("left", "right"):
+            fk_key = f"effector_position_{side}"
+            mocap_key = f"mocap_pose_{side}"
+            if fk_key in observation:
+                value = observation[fk_key]
+            elif mocap_key in observation:
+                value = observation[mocap_key]
+            else:
+                raise ValueError(
+                    f"observation lacks causal {side} end-effector position"
+                )
+            effectors[side] = np.asarray(value, dtype=np.float64)[:3]
         qpos = np.asarray(observation["qpos"], dtype=np.float64)
         runtime = {}
         for side, gripper_index in (("left", 6), ("right", 13)):
@@ -153,6 +162,7 @@ class LearnedPhaseEncoder:
             "inference_sha256": self.hashes["inference"],
             "model_source_sha256": self.hashes["model_source"],
             "inputs": "current angle RGB plus causal robot-only proprioception",
+            "effector_position_source": "joint_fk_body_xpos_or_legacy_mocap_pose",
             "history_stride": self.history_stride,
             "cpu_threads_per_worker": self.cpu_threads_per_worker,
             "render_camera_names": list(self.render_camera_names),

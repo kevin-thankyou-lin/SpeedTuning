@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-methods-smoke-20260824-v1
+  name: speedtuning-act-speed-methods-smoke-20260824-v2
   timeout: {exec_timeout: 4h, queue_timeout: 4h}
   resources:
     default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 32Gi}

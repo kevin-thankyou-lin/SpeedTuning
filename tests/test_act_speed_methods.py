@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from act_speed_benchmark import (
+    JointEffectorObservationWrapper,
     METHODS,
     PHASE_METHODS,
     SailInspiredAdaptivePolicy,
@@ -13,6 +14,7 @@ from act_speed_benchmark import (
     preregistration,
     select_candidate,
 )
+from sim_env import make_sim_env
 
 
 def test_every_frozen_method_has_exact_preregistered_budget_and_dependencies():
@@ -72,6 +74,21 @@ def test_sail_inspired_policy_slows_for_gripper_transition():
 
     assert policy.select_speed(first, context) == 2.0
     assert policy.select_speed(second, context) == 1.0
+
+
+def test_joint_effector_wrapper_supplies_detector_fk_positions():
+    raw = make_sim_env("pick_and_place", render_images=False, seed=0)
+    env = JointEffectorObservationWrapper(raw)
+    try:
+        observation = env.reset().observation
+        np.testing.assert_allclose(
+            observation["effector_position_left"], [-0.31718881, 0.5, 0.29525084]
+        )
+        np.testing.assert_allclose(
+            observation["effector_position_right"], [0.31718881, 0.49999888, 0.29525084]
+        )
+    finally:
+        env.close()
 
 
 def test_candidate_selection_enforces_nine_of_ten_and_preserves_best_effort():

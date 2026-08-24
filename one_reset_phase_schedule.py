@@ -231,7 +231,7 @@ def run_phase_schedule(
         steps = int(info["physics_steps"])
         first_success_step = info.get("first_success_step")
         metric_steps = steps if first_success_step is None else int(first_success_step)
-        return {
+        result = {
             "task": task,
             "seed": int(seed),
             "schedule": list(schedule),
@@ -248,5 +248,8 @@ def run_phase_schedule(
             "phase_decisions": policy.decisions,
             "video_path": None if video_path is None else str(video_path),
         }
+        if info.get("physics_error") is not None:
+            result["physics_error"] = str(info["physics_error"])
+        return result
     finally:
         env.close()

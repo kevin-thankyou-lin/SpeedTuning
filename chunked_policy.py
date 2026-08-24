@@ -88,6 +88,12 @@ class ChunkPredictorAdapter:
         self._predict = predict
         self.observation_adapter = observation_adapter or (lambda observation: observation)
         self.output_adapter = output_adapter or (lambda output: output)
+        self.per_physics_step_action = bool(
+            getattr(self.predictor, "per_physics_step_action", False)
+        )
+        self.render_camera_names = tuple(
+            getattr(self.predictor, "render_camera_names", ())
+        )
 
     def reset(self):
         reset = getattr(self.predictor, "reset", None)
@@ -100,6 +106,22 @@ class ChunkPredictorAdapter:
         advance = getattr(self.predictor, "advance", None)
         if advance is not None:
             advance(float(nominal_steps))
+
+    def begin_decision(self, observation, speed):
+        begin = getattr(self.predictor, "begin_decision", None)
+        if begin is not None:
+            begin(self.observation_adapter(observation), float(speed))
+
+    def action(self, observation, speed):
+        action = getattr(self.predictor, "action", None)
+        if action is None:
+            raise TypeError("The wrapped predictor does not provide per-step actions")
+        output = np.asarray(
+            action(self.observation_adapter(observation), float(speed))
+        )
+        if output.shape != (14,) or not np.all(np.isfinite(output)):
+            raise ValueError("Per-step policy output must be a finite action with shape (14,)")
+        return output
 
     def __call__(self, observation):
         model_input = self.observation_adapter(observation)

@@ -267,6 +267,11 @@ def rollout_speed_policy(env, speed_policy, capture_speeds=False, frame_skip=Non
         "success": bool(info["success"]),
         "return": float(total_reward),
         "physics_steps": int(info["physics_steps"]),
+        "first_success_step": (
+            None
+            if info.get("first_success_step") is None
+            else int(info["first_success_step"])
+        ),
         "policy_time": float(info["policy_time"]),
         "mean_speed": float(np.mean(env.speed_list)),
         "max_speed": float(np.max(env.speed_list)),
@@ -279,6 +284,9 @@ def rollout_speed_policy(env, speed_policy, capture_speeds=False, frame_skip=Non
     }
     if capture_speeds:
         result["speeds"] = speeds
+    if "physics_error" in info:
+        result["physics_error"] = str(info["physics_error"])
+    result["safety_violation"] = info.get("safety_violation")
     return result
 
 
@@ -299,6 +307,19 @@ def summarize_rollouts(rollouts):
     mean_speeds = np.asarray(
         [item["mean_speed"] for item in rollouts], dtype=np.float64
     )
+    successful_first_success_steps = []
+    for item in rollouts:
+        if not item["success"]:
+            continue
+        first_success_step = item.get("first_success_step")
+        if first_success_step is None:
+            raise ValueError(
+                "Every successful rollout must record first_success_step"
+            )
+        successful_first_success_steps.append(float(first_success_step))
+    successful_first_success_steps = np.asarray(
+        successful_first_success_steps, dtype=np.float64
+    )
     return {
         "episodes": len(rollouts),
         "successes": int(successes.sum()),
@@ -318,5 +339,19 @@ def summarize_rollouts(rollouts):
             None if successful.size == 0 else float(successful.std())
         ),
         "mean_physics_steps": float(physics_steps.mean()),
+        "successful_mean_first_success_steps": (
+            None
+            if successful_first_success_steps.size == 0
+            else float(successful_first_success_steps.mean())
+        ),
+        "successful_first_success_steps_standard_deviation": (
+            None
+            if successful_first_success_steps.size == 0
+            else float(successful_first_success_steps.std())
+        ),
         "mean_commanded_speed": float(mean_speeds.mean()),
+        "safety_violations": sum(
+            item.get("safety_violation") is not None for item in rollouts
+        ),
+        "physics_errors": sum("physics_error" in item for item in rollouts),
     }

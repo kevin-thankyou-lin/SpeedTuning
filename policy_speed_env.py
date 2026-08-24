@@ -80,13 +80,19 @@ class ChunkedActionSource:
     """Advance an arbitrary joint-action chunk predictor by a requested speed."""
 
     def __init__(self, predictor):
-        self.runner = ChunkedPolicyRunner(predictor)
+        self.runner = (
+            predictor
+            if getattr(predictor, "per_physics_step_action", False)
+            else ChunkedPolicyRunner(predictor)
+        )
 
     def reset(self):
         self.runner.reset()
 
     def begin_decision(self, timestep, speed):
-        self.runner.begin_decision(timestep.observation, speed=speed)
+        begin = getattr(self.runner, "begin_decision", None)
+        if begin is not None:
+            begin(timestep.observation, speed=speed)
 
     def action(self, timestep, speed):
         return self.runner.action(timestep.observation, speed=speed)
@@ -118,6 +124,7 @@ class SpeedPolicyEnv:
         video_path="output_video.mp4",
         max_physics_steps=None,
         terminate_on_success=False,
+        safety_monitor=None,
         environment_metadata=None,
     ):
         self.env = env
@@ -138,6 +145,7 @@ class SpeedPolicyEnv:
         self.onscreen_render = bool(onscreen_render)
         self.video_path = Path(video_path)
         self.terminate_on_success = bool(terminate_on_success)
+        self.safety_monitor = safety_monitor
         self._environment_metadata = dict(environment_metadata or {})
 
         values = np.asarray(speed_values, dtype=np.float64)
@@ -164,6 +172,7 @@ class SpeedPolicyEnv:
         self.obs_space = single_observation_dim * self.frame_stack
         self.cur_ts = None
         self.cur_success = False
+        self.first_success_step = None
         self.policy_time = 0.0
         self.physics_steps = 0
         self.speed_list = []
@@ -171,6 +180,7 @@ class SpeedPolicyEnv:
         self._observation_stack = deque(maxlen=self.frame_stack)
         self._figure = None
         self._plot_image = None
+        self.safety_violation = None
 
     def reset(self):
         self.cur_ts = self.env.reset()
@@ -179,10 +189,12 @@ class SpeedPolicyEnv:
         if reset_encoder is not None:
             reset_encoder()
         self.cur_success = False
+        self.first_success_step = None
         self.policy_time = 0.0
         self.physics_steps = 0
         self.speed_list = []
         self.image_list = []
+        self.safety_violation = None
         self._observation_stack.clear()
 
         if self.onscreen_render:
@@ -301,12 +313,18 @@ class SpeedPolicyEnv:
                 "speed": speed,
                 "policy_time": self.policy_time,
                 "physics_steps": self.physics_steps,
+                "first_success_step": self.first_success_step,
                 "task_reward": 0.0,
                 "target_reward": self.env.task.max_reward,
                 "physics_error": str(exc),
+                "safety_violation": self.safety_violation,
             }
             return self.get_obs(), reward, done, info
         self.cur_ts = next_timestep
+        if self.safety_monitor is not None:
+            violation = self.safety_monitor(self.cur_ts.observation)
+            if self.safety_violation is None and violation is not None:
+                self.safety_violation = str(violation)
         self.policy_time += speed
         self.physics_steps += 1
         self.speed_list.append(speed)
@@ -325,6 +343,8 @@ class SpeedPolicyEnv:
         task_reward = float(self.cur_ts.reward or 0)
         if task_reward >= self.env.task.max_reward:
             self.cur_success = True
+            if self.first_success_step is None:
+                self.first_success_step = self.physics_steps
         timed_out = (
             self.policy_time >= self.episode_len
             or self.physics_steps >= self.max_physics_steps
@@ -339,8 +359,10 @@ class SpeedPolicyEnv:
             "speed": speed,
             "policy_time": self.policy_time,
             "physics_steps": self.physics_steps,
+            "first_success_step": self.first_success_step,
             "task_reward": task_reward,
             "target_reward": self.env.task.max_reward,
+            "safety_violation": self.safety_violation,
         }
         return self.get_obs(), reward, done, info
 
@@ -420,6 +442,9 @@ class SpeedPolicyEnv:
         close_encoder = getattr(self.observation_encoder, "close", None)
         if close_encoder is not None:
             close_encoder()
+        close_environment = getattr(self.env, "close", None)
+        if close_environment is not None:
+            close_environment()
 
 
 def create_speed_env(
@@ -439,6 +464,7 @@ def create_speed_env(
     decision_mode="fixed",
     terminate_on_success=False,
     randomize_object_pose=False,
+    safety_monitor=None,
 ):
     """Create a speed environment around a scripted or chunked base policy.
 
@@ -459,7 +485,16 @@ def create_speed_env(
         )
     if getattr(observation_encoder, "requires_images", False) and not render_images:
         raise ValueError("The configured speed observation encoder requires images")
-    render_camera_names = getattr(observation_encoder, "render_camera_names", None)
+    policy_camera_names = tuple(
+        getattr(chunk_predictor, "render_camera_names", ())
+    )
+    observation_camera_names = tuple(
+        getattr(observation_encoder, "render_camera_names", ())
+    )
+    requested_cameras = tuple(
+        dict.fromkeys((*policy_camera_names, *observation_camera_names))
+    )
+    render_camera_names = requested_cameras or None
 
     if chunk_predictor is None:
         env = make_ee_sim_env(
@@ -496,6 +531,7 @@ def create_speed_env(
         save_video=save_video,
         video_path=video_path,
         terminate_on_success=terminate_on_success,
+        safety_monitor=safety_monitor,
         environment_metadata={
             "task": task_name,
             "base_policy": (

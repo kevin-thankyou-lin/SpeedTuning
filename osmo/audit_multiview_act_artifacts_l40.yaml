@@ -1,0 +1,85 @@
+version: 2
+workflow:
+  name: speedtuning-audit-multiview-act-artifacts-20260824-v2
+  timeout:
+    exec_timeout: 30m
+    queue_timeout: 4h
+  resources:
+    default:
+      cpu: 2
+      gpu: 0
+      memory: 8Gi
+      platform: ovx-l40
+      storage: 2Gi
+  groups:
+    - name: audit-group
+      tasks:
+        - name: audit
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/audit.sh]
+          files:
+            - path: /tmp/audit.sh
+              contents: |-
+                set -euo pipefail
+                PARENT=/mnt/amlfs-04/home/linke/speedtuning-original-act
+                OUTPUT=/osmo/run/outputs
+                mkdir -p "$OUTPUT"
+                python - <<'PY'
+                import hashlib
+                import json
+                from pathlib import Path
+
+                parent = Path("/mnt/amlfs-04/home/linke/speedtuning-original-act")
+                output = Path("/osmo/run/outputs/multiview_act_artifact_audit.json")
+                specs = {
+                    "pick": ("speedtuning-original-act-pick-3pv-wrists-20260824-v1", "pick", 49),
+                    "tea": ("speedtuning-original-act-tea-3pv-wrists-20260823-v1", "tea", 50),
+                    "insertion": ("speedtuning-original-act-insertion-3pv-wrists-20260824-v1", "insertion", 49),
+                }
+                report = {"schema": "multiview-act-artifact-audit-v1", "tasks": {}}
+                for label, (experiment, task_dir, expected_successes) in specs.items():
+                    root = parent / experiment / task_dir
+                    required = [
+                        "checkpoints/policy_best.ckpt",
+                        "checkpoints/dataset_stats.pkl",
+                        "checkpoints/policy_config.json",
+                        "checkpoints/training_complete.json",
+                        "dataset/collection_summary.json",
+                        "training-eval/progress.json",
+                        "evaluation.json",
+                        "summary.json",
+                        "SHA256SUMS",
+                    ]
+                    missing = [name for name in required if not (root / name).is_file()]
+                    if missing:
+                        raise SystemExit(f"{label}: missing required artifacts: {missing}")
+                    summary = json.loads((root / "summary.json").read_text())
+                    evaluation = json.loads((root / "evaluation.json").read_text())
+                    if evaluation["episodes"] != 50 or evaluation["successes"] != expected_successes:
+                        raise SystemExit(
+                            f"{label}: unexpected final result "
+                            f"{evaluation['successes']}/{evaluation['episodes']}"
+                        )
+                    hashes = {}
+                    for name in required[:-1]:
+                        path = root / name
+                        hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+                    report["tasks"][label] = {
+                        "root": str(root),
+                        "summary": summary,
+                        "evaluation": {
+                            "episodes": evaluation["episodes"],
+                            "successes": evaluation["successes"],
+                            "success_rate": evaluation["success_rate"],
+                            "seed_base": evaluation["rollouts"][0]["seed"],
+                            "seed_end": evaluation["rollouts"][-1]["seed"],
+                        },
+                        "sha256": hashes,
+                        "recorded_sha256sums": (root / "SHA256SUMS").read_text().splitlines(),
+                    }
+                output.write_text(json.dumps(report, indent=2) + "\n")
+                print(json.dumps(report, separators=(",", ":")), flush=True)
+                PY
+                echo MULTIVIEW_ACT_ARTIFACT_AUDIT_COMPLETE

@@ -1,0 +1,41 @@
+version: 2
+default-values:
+  source_commit: REQUIRED_SOURCE_COMMIT
+workflow:
+  name: speedtuning-act-speed-audit-20260824-v2
+  timeout: {exec_timeout: 30m, queue_timeout: 4h}
+  resources:
+    default: {cpu: 2, gpu: 0, memory: 8Gi, platform: ovx-l40, storage: 4Gi}
+  groups:
+    - name: audit-group
+      tasks:
+        - name: audit
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            SOURCE_COMMIT: "{{ source_commit }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
+                REPORT=$BENCHMARK/reports/$SOURCE_COMMIT
+                CODE=/osmo/run/workspace/SpeedTuning-act-speed-audit
+                OUTPUT=/osmo/run/outputs/audit
+                mkdir -p "$REPORT" "$OUTPUT"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                cd "$CODE"
+                python scripts/audit_act_speed_benchmark.py \
+                  --contract experiments/act_speed_benchmark_v1/contract.json \
+                  --benchmark-root "$BENCHMARK" \
+                  --base-source 298c6d16784f228df0b1f455d0e41b4276ec5184 \
+                  --repair-source 866c9f436caf0a73e5e08ef83be38cbe89a23a61 \
+                  --base-manifest-sha256 b5635f395e23fdf4fb12f1f4093708f0e7203b65152a911c85ac566ebbe777a1 \
+                  --repair-manifest-sha256 d2d8d56229a6a21e39da038cc2ed82dc8b4fa355e0454924fed7609c72c8ed80 \
+                  --output "$REPORT" 2>&1 | tee "$OUTPUT/run.log"
+                cp "$REPORT/audit.json" "$REPORT/RESULTS.md" "$OUTPUT/"
+                sha256sum "$REPORT/audit.json" "$REPORT/RESULTS.md"

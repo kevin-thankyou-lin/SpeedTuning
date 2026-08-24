@@ -67,7 +67,28 @@ def test_learned_phase_encoder_exposes_raw_detector_argmax():
     value["images"] = {"angle": np.zeros((84, 84, 3), dtype=np.uint8)}
 
     assert encoder(value).tolist() == [0, 0, 1, 0]
+    assert encoder.output_dim(123) == 4
     assert encoder.decision_token() == 2
     assert encoder.spec()["temporal_postprocessing"] == "none_raw_argmax"
     assert encoder.spec()["render_camera_names"] == ["angle"]
     assert encoder.spec()["cpu_threads_per_worker"] == 2
+    assert encoder.spec()["effector_position_source"] == "joint_fk_body_xpos_or_legacy_mocap_pose"
+
+
+def test_learned_phase_encoder_accepts_joint_fk_effector_positions():
+    from learned_phase_observation import LearnedPhaseEncoder
+
+    encoder = LearnedPhaseEncoder(
+        checkpoint_path=".", source_root=".",
+        checkpoint_sha256="0" * 64, inference_sha256="1" * 64,
+        model_source_sha256="2" * 64, predictor=FakeLearnedPredictor(),
+    )
+    value = observation([(0, 0, 0)])
+    value.pop("mocap_pose_left")
+    value.pop("mocap_pose_right")
+    value["effector_position_left"] = np.asarray([0.1, 0.2, 0.3])
+    value["effector_position_right"] = np.asarray([0.4, 0.5, 0.6])
+    value["qpos"] = np.zeros(14)
+    value["images"] = {"angle": np.zeros((84, 84, 3), dtype=np.uint8)}
+
+    assert encoder(value).tolist() == [0, 0, 1, 0]

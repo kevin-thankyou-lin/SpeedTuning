@@ -1,0 +1,79 @@
+version: 2
+workflow:
+  name: speedtuning-act-speed-stage-detector-20260824-v2
+  timeout:
+    exec_timeout: 30m
+    queue_timeout: 4h
+  resources:
+    default:
+      cpu: 2
+      gpu: 0
+      memory: 8Gi
+      platform: ovx-l40
+      storage: 8Gi
+  groups:
+    - name: detector-stage-group
+      tasks:
+        - name: detector-stage
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                UPLOAD=/osmo/run/workspace/detector-upload
+                DEST=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1/frozen_detector
+                OUTPUT=/osmo/run/outputs
+                CHECKPOINT_SHA=c25c3f530da42eb7c60e5f70405b3a99c56ab72c1e53dfd27055dc3d99c3512d
+                INFERENCE_SHA=1398e1d1b5b4e682f009c6501598e651a516341f6d60822f40fc575a40061815
+                MODEL_SHA=8a47f110f19f4e52a39b7e0e4f2273c2895690f6332ab17a4b71c8eb5ce4ae37
+
+                for _ in $(seq 1 120); do
+                  test -f "$UPLOAD/rgb_proprio_phase_rn18.pt" \
+                    -a -f "$UPLOAD/rgb_inference.py" \
+                    -a -f "$UPLOAD/rgb_proprio.py" && break
+                  sleep 5
+                done
+                test "$(sha256sum "$UPLOAD/rgb_proprio_phase_rn18.pt" | awk '{print $1}')" = "$CHECKPOINT_SHA"
+                test "$(sha256sum "$UPLOAD/rgb_inference.py" | awk '{print $1}')" = "$INFERENCE_SHA"
+                test "$(sha256sum "$UPLOAD/rgb_proprio.py" | awk '{print $1}')" = "$MODEL_SHA"
+
+                if test -e "$DEST"; then
+                  test "$(sha256sum "$DEST/rgb_proprio_phase_rn18.pt" | awk '{print $1}')" = "$CHECKPOINT_SHA"
+                  test "$(sha256sum "$DEST/source/phase_detector/rgb_inference.py" | awk '{print $1}')" = "$INFERENCE_SHA"
+                  test "$(sha256sum "$DEST/source/phase_detector/rgb_proprio.py" | awk '{print $1}')" = "$MODEL_SHA"
+                else
+                  mkdir -p "$DEST/source/phase_detector"
+                  install -m 0444 "$UPLOAD/rgb_proprio_phase_rn18.pt" "$DEST/rgb_proprio_phase_rn18.pt"
+                  install -m 0444 "$UPLOAD/rgb_inference.py" "$DEST/source/phase_detector/rgb_inference.py"
+                  install -m 0444 "$UPLOAD/rgb_proprio.py" "$DEST/source/phase_detector/rgb_proprio.py"
+                fi
+
+                mkdir -p "$OUTPUT"
+                export DEST CHECKPOINT_SHA INFERENCE_SHA MODEL_SHA
+                python - <<'PY'
+                import json
+                import os
+                from pathlib import Path
+
+                receipt = {
+                    "schema": "act-speed-frozen-detector-stage-v1",
+                    "destination": os.environ["DEST"],
+                    "files": {
+                        "rgb_proprio_phase_rn18.pt": os.environ["CHECKPOINT_SHA"],
+                        "source/phase_detector/rgb_inference.py": os.environ["INFERENCE_SHA"],
+                        "source/phase_detector/rgb_proprio.py": os.environ["MODEL_SHA"],
+                    },
+                    "modes": {
+                        str(path.relative_to(os.environ["DEST"])): oct(path.stat().st_mode & 0o777)
+                        for path in Path(os.environ["DEST"]).rglob("*") if path.is_file()
+                    },
+                }
+                Path("/osmo/run/outputs/detector_stage_receipt.json").write_text(
+                    json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+                )
+                print(json.dumps(receipt, sort_keys=True), flush=True)
+                PY
+                echo ACT_SPEED_DETECTOR_STAGE_COMPLETE

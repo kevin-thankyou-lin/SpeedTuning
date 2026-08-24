@@ -1,0 +1,46 @@
+version: 2
+default-values:
+  source_commit: REQUIRED_SOURCE_COMMIT
+  task_label: REQUIRED_TASK
+workflow:
+  name: speedtuning-act-speed-native-{{ task_label }}-20260824-v1
+  timeout: {exec_timeout: 24h, queue_timeout: 4h}
+  resources:
+    default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 32Gi}
+  groups:
+    - name: native-group
+      tasks:
+        - name: native
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            SOURCE_COMMIT: "{{ source_commit }}"
+            TASK_LABEL: "{{ task_label }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
+                ATTEMPT=$BENCHMARK/attempts/$SOURCE_COMMIT
+                RUN=$BENCHMARK/runs/$SOURCE_COMMIT/$TASK_LABEL/native_1x/final
+                CODE=/osmo/run/workspace/SpeedTuning-act-speed-native-$TASK_LABEL
+                OUTPUT=/osmo/run/outputs/native
+                export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 TOKENIZERS_PARALLELISM=false
+                mkdir -p "$RUN" "$OUTPUT"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra rl --extra test
+                .venv/bin/python scripts/run_act_speed_benchmark_cell.py \
+                  --contract experiments/act_speed_benchmark_v1/contract.json \
+                  --run-manifest "$ATTEMPT/run_manifest.json" --source-commit "$SOURCE_COMMIT" \
+                  --task-label "$TASK_LABEL" --method native_1x --stage native \
+                  --output-root "$RUN" --device cuda 2>&1 | tee "$OUTPUT/run.log"
+                cp "$RUN/identity.json" "$RUN/progress.json" "$RUN/result.json" "$RUN/COMPLETE.json" "$OUTPUT/"
+                echo ACT_SPEED_NATIVE_COMPLETE task=$TASK_LABEL source=$SOURCE_COMMIT

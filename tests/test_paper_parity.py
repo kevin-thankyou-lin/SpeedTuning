@@ -138,6 +138,7 @@ def test_paper_metrics_use_physical_length_not_commanded_speed():
     )
     summary = summarize_rollouts([rollout])
     assert summary["mean_acceleration"] == rollout["acceleration"]
+    assert summary["successful_mean_first_success_steps"] == rollout["first_success_step"]
     assert "mean_commanded_speed" in summary
 
 

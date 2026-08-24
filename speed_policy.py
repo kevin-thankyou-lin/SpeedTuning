@@ -286,6 +286,7 @@ def rollout_speed_policy(env, speed_policy, capture_speeds=False, frame_skip=Non
         result["speeds"] = speeds
     if "physics_error" in info:
         result["physics_error"] = str(info["physics_error"])
+    result["safety_violation"] = info.get("safety_violation")
     return result
 
 
@@ -349,4 +350,8 @@ def summarize_rollouts(rollouts):
             else float(successful_first_success_steps.std())
         ),
         "mean_commanded_speed": float(mean_speeds.mean()),
+        "safety_violations": sum(
+            item.get("safety_violation") is not None for item in rollouts
+        ),
+        "physics_errors": sum("physics_error" in item for item in rollouts),
     }

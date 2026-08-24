@@ -59,6 +59,27 @@ def test_physics_instability_becomes_failed_terminal_transition(monkeypatch):
     assert np.isfinite(reward)
 
 
+def test_safety_monitor_is_checked_each_physics_tick_and_latched():
+    calls = []
+
+    def monitor(observation):
+        calls.append(np.asarray(observation["qpos"]).copy())
+        return "test_workspace_violation" if len(calls) == 2 else None
+
+    env = create_speed_env(
+        "tea_bag", seed=0, safety_monitor=monitor, decision_frame_skip=5
+    )
+    try:
+        env.reset()
+        _, _, done, info = env.step_decision(1.0, quantized=False)
+    finally:
+        env.close()
+
+    assert not done
+    assert len(calls) == 5
+    assert info["safety_violation"] == "test_workspace_violation"
+
+
 def test_recorded_chunk_policy_pairs_with_speed_environment():
     env = create_recorded_chunk_speed_env("tea_bag", chunk_size=25, seed=0)
     result = rollout_speed_policy(env, FixedSpeedPolicy(1.0))

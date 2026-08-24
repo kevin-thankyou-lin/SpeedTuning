@@ -231,7 +231,11 @@ class OriginalACTSpeedAdapter:
         if missing:
             raise ValueError("Missing ACT camera images: " + ", ".join(missing))
 
-        qpos = (np.asarray(observation["qpos"], dtype=np.float32) - self.qpos_mean) / self.qpos_std
+        # Preserve the frozen evaluator's numerical path exactly: simulator
+        # qpos is normalized in its native dtype and only converted to float32
+        # by torch.as_tensor below.  Casting qpos before normalization can move
+        # the ACT input by a few ulps and invalidate strict uniform-1x parity.
+        qpos = (np.asarray(observation["qpos"]) - self.qpos_mean) / self.qpos_std
         if qpos.shape != (14,):
             raise ValueError("ACT qpos observation must have shape (14,)")
         progress = normalized_episode_progress(self._policy_time, self.episode_len)

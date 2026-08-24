@@ -103,6 +103,32 @@ def test_uniform_one_matches_100_step_reference_temporal_ensemble():
     assert len(model.inputs) == 3
 
 
+def test_qpos_normalization_matches_frozen_evaluator_dtype_order():
+    chunk = np.ones((4, 14), dtype=np.float32)
+    mean = np.linspace(-0.7, 0.9, 14, dtype=np.float32)
+    std = np.linspace(0.03, 1.1, 14, dtype=np.float32)
+    qpos = np.linspace(-0.91, 0.83, 14, dtype=np.float64)
+    model = RecordingACT([chunk])
+    adapter = OriginalACTSpeedAdapter(
+        model,
+        camera_names=CAMERAS,
+        qpos_mean=mean,
+        qpos_std=std,
+        action_mean=np.zeros(14),
+        action_std=np.ones(14),
+        episode_len=5,
+        num_queries=4,
+        device="cpu",
+    )
+    observation = _observation()
+    observation["qpos"] = qpos
+
+    adapter.action(observation, speed=1.0)
+
+    reference = torch.as_tensor((qpos - mean) / std, dtype=torch.float32)
+    torch.testing.assert_close(model.inputs[0][0][0, :14], reference, rtol=0, atol=0)
+
+
 def test_multiview_act_progress_tracks_nominal_policy_time_at_acceleration():
     chunk = np.ones((4, 14), dtype=np.float32)
     adapter, model = _adapter([chunk, chunk], episode_len=9)

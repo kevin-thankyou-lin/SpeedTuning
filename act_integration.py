@@ -217,6 +217,20 @@ class OriginalACTSpeedAdapter:
     def reset(self):
         self._policy_time = 0.0
         self._predictions = []
+        # The retained evaluator allocates one dense prediction ledger after
+        # every environment reset.  Keep that exact storage/computation path
+        # available while execution remains uniform 1x; using an equivalent
+        # dynamic stack changes CUDA allocation and reduction history enough to
+        # move marginal frozen-bank outcomes.
+        self._uniform_one = True
+        self._all_time_actions = self.torch.zeros(
+            (
+                self.episode_len,
+                self.episode_len + self.num_queries,
+                14,
+            ),
+            device=self.device,
+        )
 
     def begin_decision(self, observation, speed):
         """Speed decisions must not change ACT's per-physics-step query rate."""
@@ -292,17 +306,25 @@ class OriginalACTSpeedAdapter:
             item for item in self._predictions if item[0] >= oldest_allowed
         ]
 
-        candidates = []
-        for origin, prediction in self._predictions:
-            offset = self._policy_time - origin
-            if 0 <= offset <= self.num_queries - 1:
-                candidate = self._sample_chunk(prediction, offset)
-                # Match the original evaluator's populated-row test.
-                if bool(self.torch.all(candidate != 0)):
-                    candidates.append(candidate)
-        if not candidates:
+        if self._uniform_one and speed == 1.0 and self._policy_time.is_integer():
+            step = int(self._policy_time)
+            self._all_time_actions[step, step : step + self.num_queries] = chunk
+            candidates = self._all_time_actions[:, step]
+            candidates = candidates[self.torch.all(candidates != 0, dim=1)]
+        else:
+            self._uniform_one = False
+            candidates = []
+            for origin, prediction in self._predictions:
+                offset = self._policy_time - origin
+                if 0 <= offset <= self.num_queries - 1:
+                    candidate = self._sample_chunk(prediction, offset)
+                    # Match the original evaluator's populated-row test.
+                    if bool(self.torch.all(candidate != 0)):
+                        candidates.append(candidate)
+            if candidates:
+                candidates = self.torch.stack(candidates)
+        if len(candidates) == 0:
             raise RuntimeError("ACT temporal ensemble has no populated candidates")
-        candidates = self.torch.stack(candidates)
         weights = np.exp(
             -self.temporal_ensemble_m * np.arange(len(candidates), dtype=np.float64)
         )

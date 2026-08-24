@@ -118,6 +118,26 @@ def test_uniform_one_matches_100_step_reference_temporal_ensemble():
     assert len(model.inputs) == 3
 
 
+def test_uniform_one_uses_retained_dense_ledger_without_interpolation(monkeypatch):
+    chunks = [
+        np.stack([np.full(14, query + offset + 1.0) for offset in range(4)])
+        for query in range(2)
+    ]
+    adapter, _ = _adapter(chunks, episode_len=5)
+
+    def interpolation_is_not_retained(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("uniform 1x must use the retained dense ledger")
+
+    monkeypatch.setattr(adapter, "_sample_chunk", interpolation_is_not_retained)
+
+    adapter.action(_observation(), speed=1.0)
+    adapter.action(_observation(), speed=1.0)
+
+    assert adapter._uniform_one is True
+    assert adapter._all_time_actions.shape == (5, 9, 14)
+
+
 def test_qpos_normalization_matches_frozen_evaluator_dtype_order():
     chunk = np.ones((4, 14), dtype=np.float32)
     mean = np.linspace(-0.7, 0.9, 14, dtype=np.float32)

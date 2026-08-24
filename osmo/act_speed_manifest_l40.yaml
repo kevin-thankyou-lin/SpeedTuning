@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-manifest-20260824-v9
+  name: speedtuning-act-speed-manifest-20260824-v10
   timeout:
     exec_timeout: 2h
     queue_timeout: 4h

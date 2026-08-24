@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,6 +7,7 @@ import torch
 from rl.rainbowDQN.dqnAgent import DQNAgent
 from scripts.run_act_speed_benchmark_cell import (
     load_contiguous_states,
+    import_search_receipts,
     rainbow_snapshot,
     restore_rainbow,
 )
@@ -59,3 +61,36 @@ def test_contiguous_resume_rejects_gap(tmp_path):
         assert "non-contiguous" in str(exc)
     else:
         raise AssertionError("resume gap was accepted")
+
+
+def test_search_repair_imports_receipts_by_hash_without_reexecution(tmp_path):
+    origin = tmp_path / "origin"
+    output = tmp_path / "output"
+    (origin / "states").mkdir(parents=True)
+    output.mkdir()
+    prereg = {"method": "learned_phase_subtask", "search_rollouts": 50}
+    (origin / "preregistration.json").write_text(json.dumps(prereg))
+    origin_identity = {
+        "identity_sha256": "old-identity",
+        "source_commit": "old-source",
+        "method": "learned_phase_subtask",
+        "task_label": "pick",
+    }
+    (origin / "identity.json").write_text(json.dumps(origin_identity))
+    for seed in (10, 11):
+        (origin / "states" / f"{seed}.json").write_text(
+            json.dumps({"seed": seed, "identity_sha256": "old-identity", "success": True})
+        )
+    args = SimpleNamespace(
+        import_search_root=origin, import_search_count=2, stage="search",
+        method="learned_phase_subtask", task_label="pick", import_reason="verified_bug",
+    )
+
+    import_search_receipts(args, output, [10, 11, 12], "new-identity", prereg)
+    records = load_contiguous_states(output / "states", [10, 11, 12], "new-identity")
+
+    assert len(records) == 2
+    assert records[0]["imported_rollout_receipt"]["rollout_reexecuted"] is False
+    marker = json.loads((output / "IMPORT.json").read_text())
+    assert marker["count"] == 2
+    assert marker["rollouts_reexecuted"] == 0

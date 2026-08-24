@@ -11,6 +11,7 @@ from act_speed_benchmark import (
     SailInspiredAdaptivePolicy,
     build_offline_artifact,
     candidate_for_episode,
+    policy_from_candidate,
     preregistration,
     select_candidate,
 )
@@ -30,6 +31,9 @@ def test_every_frozen_method_has_exact_preregistered_budget_and_dependencies():
             assert [candidate_for_episode(value, index)["id"] for index in range(50)] == [
                 candidate["id"] for candidate in value["candidates"] for _ in range(10)
             ]
+            if method == "learned_phase_subtask":
+                for candidate in value["candidates"]:
+                    assert policy_from_candidate(method, candidate).schedule == tuple(candidate["schedule"])
 
 
 def _write_episode(path, offset):

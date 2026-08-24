@@ -14,7 +14,6 @@ from pathlib import Path
 import numpy as np
 
 from learned_phase_observation import PHASES
-from one_reset_phase_schedule import PhaseSchedulePolicy
 from speed_observation import StateObservationEncoder
 from speed_policy import FixedSpeedPolicy, SpeedProfilePolicy
 
@@ -76,6 +75,27 @@ class JointEffectorObservationWrapper:
 
     def __getattr__(self, name):
         return getattr(self.environment, name)
+
+
+class LearnedPhaseSchedulePolicy:
+    """Benchmark-local phase schedule over the frozen five-speed action set."""
+
+    frame_skip = 10
+
+    def __init__(self, schedule):
+        values = tuple(float(value) for value in schedule)
+        if len(values) != len(PHASES):
+            raise ValueError("learned phase schedule must have four speeds")
+        if any(value not in SPEED_VALUES for value in values):
+            raise ValueError("learned phase schedule uses an unregistered speed")
+        self.schedule = values
+
+    def select_speed(self, observation, context):
+        del context
+        values = np.asarray(observation, dtype=np.float64)
+        if values.shape != (len(PHASES),):
+            raise ValueError("learned phase schedule requires raw four-phase one-hot")
+        return self.schedule[int(np.argmax(values))]
 
 
 def canonical_sha256(value) -> str:
@@ -431,7 +451,7 @@ def policy_from_candidate(method: str, candidate: dict, offline_artifact=None):
     if method == "uniform_sweep":
         return FixedSpeedPolicy(candidate["speed"])
     if method == "learned_phase_subtask":
-        return PhaseSchedulePolicy(tuple(candidate["schedule"]))
+        return LearnedPhaseSchedulePolicy(candidate["schedule"])
     if method == "awe_offline_proxy":
         return SpeedProfilePolicy(candidate["profile"])
     if method == "sail_inspired_adaptive":

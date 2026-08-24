@@ -288,6 +288,19 @@ def publish_identity(args, task_manifest, prereg, output, offline_artifact=None)
             "physics_error_policy": "count_as_failure_and_continue",
             "safety_monitor": "workspace_violation_every_physics_tick",
         },
+        "search_receipt_import": (
+            None
+            if args.import_search_root is None
+            else {
+                "origin_root": str(args.import_search_root.resolve()),
+                "count": args.import_search_count,
+                "reason": args.import_reason,
+                "origin_identity_sha256": sha256(args.import_search_root / "identity.json"),
+                "origin_preregistration_sha256": sha256(
+                    args.import_search_root / "preregistration.json"
+                ),
+            }
+        ),
     }
     identity_hash = canonical_sha256(identity)
     identity["identity_sha256"] = identity_hash
@@ -298,6 +311,53 @@ def publish_identity(args, task_manifest, prereg, output, offline_artifact=None)
     else:
         immutable_json(path, identity)
     return identity_hash, seeds
+
+
+def import_search_receipts(args, output, seeds, identity, prereg):
+    if args.import_search_root is None:
+        return
+    if args.stage != "search" or not 0 < args.import_search_count < 50:
+        raise RuntimeError("receipt import requires a bounded search prefix")
+    origin = args.import_search_root.resolve()
+    if any((output / "states").glob("*.json")):
+        return
+    if json.loads((origin / "preregistration.json").read_text()) != prereg:
+        raise RuntimeError("imported search preregistration differs from current preregistration")
+    origin_identity = json.loads((origin / "identity.json").read_text())
+    if origin_identity.get("method") != args.method or origin_identity.get("task_label") != args.task_label:
+        raise RuntimeError("imported search cell identity targets a different cell")
+    imported = []
+    for seed in seeds[: args.import_search_count]:
+        origin_path = origin / "states" / f"{seed}.json"
+        if not origin_path.exists():
+            raise RuntimeError(f"missing immutable origin receipt {origin_path}")
+        value = json.loads(origin_path.read_text())
+        if value.get("seed") != seed or value.get("identity_sha256") != origin_identity["identity_sha256"]:
+            raise RuntimeError(f"origin receipt identity mismatch: {origin_path}")
+        copied = dict(value)
+        copied["identity_sha256"] = identity
+        copied["imported_rollout_receipt"] = {
+            "origin_path": str(origin_path),
+            "origin_sha256": sha256(origin_path),
+            "origin_identity_sha256": origin_identity["identity_sha256"],
+            "origin_source_commit": origin_identity["source_commit"],
+            "rollout_reexecuted": False,
+        }
+        destination = output / "states" / f"{seed}.json"
+        immutable_json(destination, copied)
+        imported.append({"seed": seed, "origin_sha256": sha256(origin_path), "destination_sha256": sha256(destination)})
+    immutable_json(
+        output / "IMPORT.json",
+        {
+            "schema": "act-speed-search-receipt-import-v1",
+            "identity_sha256": identity,
+            "origin_root": str(origin),
+            "reason": args.import_reason,
+            "count": len(imported),
+            "rollouts_reexecuted": 0,
+            "receipts": imported,
+        },
+    )
 
 
 def rollout_one(runtime, seed, policy, identity, **extra):
@@ -700,6 +760,9 @@ def main() -> int:
     parser.add_argument("--search-root", type=Path)
     parser.add_argument("--detector-checkpoint", type=Path)
     parser.add_argument("--detector-source", type=Path)
+    parser.add_argument("--import-search-root", type=Path)
+    parser.add_argument("--import-search-count", type=int, default=0)
+    parser.add_argument("--import-reason")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
@@ -740,6 +803,7 @@ def main() -> int:
                 immutable_json(prereg_path, prereg)
 
     identity, seeds = publish_identity(args, task_manifest, prereg, output, offline_artifact)
+    import_search_receipts(args, output, seeds, identity, prereg)
     records = load_contiguous_states(output / "states", seeds, identity)
     if (output / "COMPLETE.json").exists():
         if len(records) != 50:

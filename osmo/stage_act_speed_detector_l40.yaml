@@ -1,6 +1,6 @@
 version: 2
 workflow:
-  name: speedtuning-act-speed-stage-detector-20260824-v1
+  name: speedtuning-act-speed-stage-detector-20260824-v2
   timeout:
     exec_timeout: 30m
     queue_timeout: 4h
@@ -9,7 +9,7 @@ workflow:
       cpu: 2
       gpu: 0
       memory: 8Gi
-      platform: cpu
+      platform: ovx-l40
       storage: 8Gi
   groups:
     - name: detector-stage-group

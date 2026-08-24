@@ -11,7 +11,7 @@ workflow:
       cpu: 4
       gpu: 0
       memory: 16Gi
-      platform: cpu
+      platform: ovx-l40
       storage: 8Gi
   groups:
     - name: manifest-group

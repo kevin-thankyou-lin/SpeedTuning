@@ -39,8 +39,14 @@ the final seeds for debugging, ranking, or repair.
 
 All phase-dependent methods must verify the frozen learned-detector hash.  A
 method that does not need a phase detector must not receive detector outputs.
-Reject any candidate below 45/50 or with a safety violation; preserve the
-fastest observed best-effort result separately from the selectable candidate.
+The 50-rollout accounting is method-specific and must be preregistered before
+the first episode: a sweep may divide the bank among candidates, whereas an
+online RL method uses all 50 as sequential training episodes and freezes its
+terminal checkpoint (never a retrospectively selected checkpoint).  A
+candidate evaluated on ten matched states must pass at least 9/10; any safety
+violation rejects it.  Preserve the fastest observed best-effort result
+separately from the selectable candidate.  The untouched 50-state final bank is
+the only common reliability estimate across all methods.
 
 ## Stage 3: untouched final evaluation
 
@@ -60,4 +66,3 @@ fastest observed best-effort result separately from the selectable candidate.
 
 The Diffusion Policy implementation/training is a separate matched study and
 must not block ACT speed benchmarking after Stage 1 parity passes.
-

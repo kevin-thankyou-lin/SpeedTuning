@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-audit-20260824-v1
+  name: speedtuning-act-speed-audit-20260824-v2
   timeout: {exec_timeout: 30m, queue_timeout: 4h}
   resources:
     default: {cpu: 2, gpu: 0, memory: 8Gi, platform: ovx-l40, storage: 4Gi}

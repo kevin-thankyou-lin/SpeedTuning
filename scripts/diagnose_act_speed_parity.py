@@ -262,11 +262,16 @@ def main() -> int:
     parser.add_argument("--checkpoint-root", type=Path, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--traces", type=Path, required=True)
     args = parser.parse_args()
 
     task = normalize_task_name(args.task)
+    if args.deterministic:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
+        torch.use_deterministic_algorithms(True)
     checkpoint = args.checkpoint_root / "checkpoints/policy_best.ckpt"
     stats_path = args.checkpoint_root / "checkpoints/dataset_stats.pkl"
     config_path = args.checkpoint_root / "checkpoints/policy_config.json"
@@ -317,6 +322,15 @@ def main() -> int:
         "task": task,
         "seed": args.seed,
         "engineering_only": True,
+        "deterministic_inference": args.deterministic,
+        "torch_runtime": {
+            "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+            "cudnn_benchmark": torch.backends.cudnn.benchmark,
+            "cudnn_deterministic": torch.backends.cudnn.deterministic,
+            "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,
+            "cuda_matmul_allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+            "float32_matmul_precision": torch.get_float32_matmul_precision(),
+        },
         "checkpoint_sha256": sha256(checkpoint),
         "stats_sha256": sha256(stats_path),
         "config_sha256": sha256(config_path),

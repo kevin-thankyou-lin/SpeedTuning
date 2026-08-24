@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-diagnose-insertion-20260824-v2
+  name: speedtuning-act-speed-diagnose-insertion-20260824-v3
   timeout:
     exec_timeout: 2h
     queue_timeout: 4h
@@ -53,7 +53,7 @@ workflow:
                 test ! -e "$RUN/diagnostic.json"
                 .venv/bin/python scripts/diagnose_act_speed_parity.py \
                   --task insertion --checkpoint-root "$ROOT" --seed 9350040 \
-                  --device cuda --output "$RUN/diagnostic.json" \
+                  --device cuda --deterministic --output "$RUN/diagnostic.json" \
                   --traces "$RUN/traces.npz" \
                   2>&1 | tee "$OUTPUT/diagnostic.log"
                 sha256sum "$RUN/diagnostic.json" "$RUN/traces.npz"

@@ -29,7 +29,9 @@ class LearnedPhaseEncoder:
     """Return raw phase argmax from the sealed deployable detector."""
 
     requires_images = True
-    output_dim = 4
+    @staticmethod
+    def output_dim(_env_state_dim):
+        return len(PHASES)
 
     def __init__(
         self,

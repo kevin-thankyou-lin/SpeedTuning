@@ -33,6 +33,8 @@ def main() -> int:
     parser.add_argument("--source-commit", required=True)
     parser.add_argument("--detector-checkpoint", type=Path, required=True)
     parser.add_argument("--detector-source", type=Path, required=True)
+    parser.add_argument("--benchmark-root", type=Path, required=True)
+    parser.add_argument("--parity-source-commit", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -61,6 +63,63 @@ def main() -> int:
         for path in tracked
         if (REPO_ROOT / path).is_file()
     }
+    parity_attempt = args.benchmark_root / "attempts" / args.parity_source_commit
+    parity_manifest_path = parity_attempt / "run_manifest.json"
+    if not parity_manifest_path.exists():
+        raise RuntimeError("passed parity source manifest is missing")
+    parity_manifest = json.loads(parity_manifest_path.read_text())
+    critical_sources = (
+        "act_integration.py",
+        "detr/models/backbone.py",
+        "detr/models/detr_vae.py",
+        "detr/models/transformer.py",
+        "detr/util/misc.py",
+        "original_act.py",
+        "policy.py",
+        "policy_speed_env.py",
+        "sim_env.py",
+        "sim_tasks.py",
+        "speed_policy.py",
+    )
+    parity_tracked = parity_manifest["source"]["tracked_file_sha256"]
+    critical_hashes = {}
+    for path in critical_sources:
+        current = source_files.get(path)
+        previous = parity_tracked.get(path)
+        if current is None or current != previous:
+            raise RuntimeError(
+                f"method source changes parity-critical file {path}: {current} != {previous}"
+            )
+        critical_hashes[path] = current
+
+    parity_gate = {}
+    for label, expected in (("pick", 49), ("tea", 50), ("insertion", 49)):
+        root = parity_attempt / "parity" / label
+        for name in ("identity.json", "result.json", "COMPLETE.json"):
+            if not (root / name).exists():
+                raise RuntimeError(f"missing passed parity receipt: {root / name}")
+        result = json.loads((root / "result.json").read_text())
+        marker = json.loads((root / "COMPLETE.json").read_text())
+        if not (
+            result.get("parity_passed") is True
+            and result.get("successes") == expected
+            and result.get("episodes") == 50
+            and result.get("safety_violations") == 0
+            and result.get("physics_errors") == 0
+            and marker.get("parity_passed") is True
+        ):
+            raise RuntimeError(f"{label} does not carry the exact passed parity gate")
+        parity_gate[label] = {
+            "successes": expected,
+            "episodes": 50,
+            "identity_sha256": result["identity_sha256"],
+            "identity_path": str(root / "identity.json"),
+            "identity_file_sha256": sha256(root / "identity.json"),
+            "result_path": str(root / "result.json"),
+            "result_file_sha256": sha256(root / "result.json"),
+            "completion_path": str(root / "COMPLETE.json"),
+            "completion_file_sha256": sha256(root / "COMPLETE.json"),
+        }
     tasks = {}
     for label, task in contract["tasks"].items():
         parity = PARITY[label]
@@ -120,6 +179,14 @@ def main() -> int:
             "sha256": detector_actual,
             "inputs": contract["learned_phase_detector"]["inputs"],
             "postprocessing": contract["learned_phase_detector"]["postprocessing"],
+        },
+        "parity_gate": {
+            "passed": True,
+            "source_commit": args.parity_source_commit,
+            "source_manifest_path": str(parity_manifest_path),
+            "source_manifest_sha256": sha256(parity_manifest_path),
+            "critical_source_sha256": critical_hashes,
+            "tasks": parity_gate,
         },
         "tasks": tasks,
         "rollout_accounting": {

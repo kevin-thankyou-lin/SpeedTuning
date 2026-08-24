@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-manifest-20260824-v7
+  name: speedtuning-act-speed-manifest-20260824-v8
   timeout:
     exec_timeout: 2h
     queue_timeout: 4h
@@ -50,6 +50,8 @@ workflow:
                 .venv/bin/python scripts/create_act_speed_manifest.py \
                   --contract experiments/act_speed_benchmark_v1/contract.json \
                   --source-commit "$SOURCE_COMMIT" \
+                  --benchmark-root "$BENCHMARK" \
+                  --parity-source-commit f7afd5db7b4a910fd8a873a8d42e48f89a5b28bb \
                   --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
                   --detector-source "$DETECTOR/source" \
                   --output "$ATTEMPT/run_manifest.json" \

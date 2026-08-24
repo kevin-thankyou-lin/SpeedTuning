@@ -67,6 +67,7 @@ def test_learned_phase_encoder_exposes_raw_detector_argmax():
     value["images"] = {"angle": np.zeros((84, 84, 3), dtype=np.uint8)}
 
     assert encoder(value).tolist() == [0, 0, 1, 0]
+    assert encoder.output_dim(123) == 4
     assert encoder.decision_token() == 2
     assert encoder.spec()["temporal_postprocessing"] == "none_raw_argmax"
     assert encoder.spec()["render_camera_names"] == ["angle"]

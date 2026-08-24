@@ -82,7 +82,10 @@ def _resolve_stats(payload, stats_path):
         raise ValueError(
             "ACT normalization stats are missing: " + ", ".join(missing)
         )
-    return {key: np.asarray(stats[key], dtype=np.float32) for key in REQUIRED_STATS}
+    # The retained ACT evaluator uses the serialized NumPy arrays without a
+    # dtype conversion.  The accepted multiview banks store float64 stats, so
+    # downcasting here changes both normalized qpos and denormalized actions.
+    return {key: np.asarray(stats[key]) for key in REQUIRED_STATS}
 
 
 def load_act_policy(
@@ -183,10 +186,10 @@ class OriginalACTSpeedAdapter:
             raise ValueError(
                 "Frozen multiview ACT requires angle, left_wrist, and right_wrist cameras"
             )
-        self.qpos_mean = np.asarray(qpos_mean, dtype=np.float32)
-        self.qpos_std = np.maximum(np.asarray(qpos_std, dtype=np.float32), 1e-6)
-        self.action_mean = np.asarray(action_mean, dtype=np.float32)
-        self.action_std = np.asarray(action_std, dtype=np.float32)
+        self.qpos_mean = np.asarray(qpos_mean)
+        self.qpos_std = np.maximum(np.asarray(qpos_std), 1e-6)
+        self.action_mean = np.asarray(action_mean)
+        self.action_std = np.asarray(action_std)
         for value, name in (
             (self.qpos_mean, "qpos_mean"),
             (self.qpos_std, "qpos_std"),
@@ -312,7 +315,7 @@ class OriginalACTSpeedAdapter:
         ).sum(dim=0).detach().cpu().numpy()
         action = normalized_action * self.action_std + self.action_mean
         self._policy_time += speed
-        return np.asarray(action, dtype=np.float32)
+        return np.asarray(action)
 
 
 def build_original_act_speed_adapter(

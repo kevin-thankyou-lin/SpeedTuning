@@ -4,12 +4,25 @@ import numpy as np
 import pytest
 import torch
 
-from act_integration import OriginalACTSpeedAdapter
+from act_integration import OriginalACTSpeedAdapter, _resolve_stats
 from chunked_policy import ChunkPredictorAdapter
 from policy_speed_env import ChunkedActionSource, create_speed_env
 
 
 CAMERAS = ("angle", "left_wrist", "right_wrist")
+
+
+def test_resolved_stats_preserve_serialized_float64_dtype():
+    stats = {
+        key: np.linspace(0.01, 0.2, 14, dtype=np.float64)
+        for key in ("qpos_mean", "qpos_std", "action_mean", "action_std")
+    }
+
+    resolved = _resolve_stats({"stats": stats}, stats_path=None)
+
+    assert all(value.dtype == np.float64 for value in resolved.values())
+    for key in stats:
+        np.testing.assert_array_equal(resolved[key], stats[key])
 
 
 class RecordingACT(torch.nn.Module):
@@ -99,7 +112,9 @@ def test_uniform_one_matches_100_step_reference_temporal_ensemble():
         expected.append(normalized * 2.0 + 10.0)
 
     np.testing.assert_array_equal(np.stack(actual), np.stack(expected))
-    assert all(action.dtype == np.float32 for action in actual)
+    # Match the retained evaluator's float32 ensemble multiplied by its
+    # serialized float64 normalization arrays.
+    assert all(action.dtype == np.float64 for action in actual)
     assert len(model.inputs) == 3
 
 
@@ -127,6 +142,40 @@ def test_qpos_normalization_matches_frozen_evaluator_dtype_order():
 
     reference = torch.as_tensor((qpos - mean) / std, dtype=torch.float32)
     torch.testing.assert_close(model.inputs[0][0][0, :14], reference, rtol=0, atol=0)
+
+
+def test_float64_stats_and_action_denormalization_match_frozen_evaluator():
+    chunk = np.stack(
+        [np.linspace(-0.3 + index, 0.8 + index, 14) for index in range(4)]
+    ).astype(np.float32)
+    qpos_mean = np.linspace(-0.2, 0.2, 14, dtype=np.float64)
+    qpos_std = np.linspace(0.01, 0.4, 14, dtype=np.float64)
+    action_mean = np.linspace(-0.1, 0.1, 14, dtype=np.float64)
+    action_std = np.linspace(0.01, 0.2, 14, dtype=np.float64)
+    model = RecordingACT([chunk])
+    adapter = OriginalACTSpeedAdapter(
+        model,
+        camera_names=CAMERAS,
+        qpos_mean=qpos_mean,
+        qpos_std=qpos_std,
+        action_mean=action_mean,
+        action_std=action_std,
+        episode_len=5,
+        num_queries=4,
+        device="cpu",
+    )
+    observation = _observation()
+    observation["qpos"] = np.linspace(-0.9, 0.9, 14, dtype=np.float64)
+
+    action = adapter.action(observation, speed=1.0)
+
+    expected_qpos = torch.as_tensor(
+        (observation["qpos"] - qpos_mean) / qpos_std, dtype=torch.float32
+    )
+    expected_action = chunk[0] * action_std + action_mean
+    torch.testing.assert_close(model.inputs[0][0][0, :14], expected_qpos, rtol=0, atol=0)
+    np.testing.assert_array_equal(action, expected_action)
+    assert action.dtype == np.float64
 
 
 def test_multiview_act_progress_tracks_nominal_policy_time_at_acceleration():

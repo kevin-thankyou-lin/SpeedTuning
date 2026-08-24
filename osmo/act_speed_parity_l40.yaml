@@ -3,7 +3,7 @@ default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
   task_label: pick
 workflow:
-  name: speedtuning-act-speed-parity-{{ task_label }}-20260824-v1
+  name: speedtuning-act-speed-parity-{{ task_label }}-20260824-v2
   timeout:
     exec_timeout: 12h
     queue_timeout: 4h

@@ -1,0 +1,157 @@
+version: 2
+default-values:
+  task: pick
+  runtime_task: pick_and_place
+  train_seed_base: 8100000
+  milestone_seed_base: 9400000
+  final_seed_base: 9150000
+workflow:
+  name: speedtuning-original-act-{{ task }}-3pv-wrists-20260824-v1
+  timeout:
+    exec_timeout: 30h
+    queue_timeout: 4h
+  resources:
+    default:
+      cpu: 12
+      gpu: 1
+      memory: 64Gi
+      platform: ovx-l40
+      storage: 64Gi
+  groups:
+    - name: {{ task }}-3pv-wrists-group
+      tasks:
+        - name: {{ task }}-3pv-wrists
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: {{ task }}
+            RUNTIME_TASK: {{ runtime_task }}
+            TRAIN_SEED_BASE: "{{ train_seed_base }}"
+            MILESTONE_SEED_BASE: "{{ milestone_seed_base }}"
+            FINAL_SEED_BASE: "{{ final_seed_base }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=228f51f3ea3f56efee291dd2409e49534d024cda
+                EXPERIMENT=speedtuning-original-act-${TASK}-3pv-wrists-20260824-v1
+                PERSIST_PARENT=/mnt/amlfs-04/home/linke/speedtuning-original-act
+                RUN=$PERSIST_PARENT/$EXPERIMENT/$TASK
+                DATASET=$RUN/dataset
+                CHECKPOINTS=$RUN/checkpoints
+                OUTPUT=/osmo/run/outputs/$TASK
+                CODE=/osmo/run/workspace/SpeedTuning-$TASK-3pv-wrists
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+
+                test ! -e "$RUN" || { echo "refusing to overwrite $RUN" >&2; exit 30; }
+                AVAILABLE_KIB=$(df -Pk "$PERSIST_PARENT" | awk 'NR==2 {print $4}')
+                REQUIRED_KIB=$((600 * 1024 * 1024))
+                test "$AVAILABLE_KIB" -ge "$REQUIRED_KIB" || {
+                  echo "insufficient shared storage: available_kib=$AVAILABLE_KIB required_kib=$REQUIRED_KIB" >&2
+                  exit 31
+                }
+                mkdir -p "$DATASET" "$CHECKPOINTS" "$OUTPUT"
+                date --iso-8601=seconds | tee "$RUN/started_at.txt"
+
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m pytest -q tests/test_original_act.py tests/test_policy_loss.py \
+                  2>&1 | tee "$RUN/pytest.log"
+
+                "$PYTHON" -m scripts.collect_original_act_data \
+                  --task "$RUNTIME_TASK" --dataset-dir "$DATASET" --num-episodes 270 \
+                  --seed-base "$TRAIN_SEED_BASE" \
+                  --camera-names angle left_wrist right_wrist \
+                  2>&1 | tee "$RUN/collect.log"
+                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 270
+
+                "$PYTHON" -m scripts.train_original_act \
+                  --dataset-dir "$DATASET" --output-dir "$CHECKPOINTS" \
+                  --num-epochs 2000 --batch-size 8 --seed 0 \
+                  --validation-episodes 20 --progress-condition \
+                  --camera-names angle left_wrist right_wrist \
+                  --eval-task "$RUNTIME_TASK" --eval-output-dir "$RUN/training-eval" \
+                  --eval-seed-base "$MILESTONE_SEED_BASE" --eval-episodes 20 \
+                  --eval-epochs 250 500 1000 1500 1900 \
+                  2>&1 | tee "$RUN/train.log"
+                test -s "$CHECKPOINTS/policy_best.ckpt"
+                test -s "$CHECKPOINTS/training_complete.json"
+
+                "$PYTHON" -m scripts.evaluate_original_act \
+                  --task "$RUNTIME_TASK" --checkpoint-dir "$CHECKPOINTS" \
+                  --output "$RUN/evaluation.json" --num-rollouts 50 \
+                  --seed-base "$FINAL_SEED_BASE" --progress-condition \
+                  --camera-names angle left_wrist right_wrist \
+                  2>&1 | tee "$RUN/evaluate.log"
+
+                export RUN TASK RUNTIME_TASK SOURCE_COMMIT
+                "$PYTHON" - <<'PY'
+                import hashlib
+                import json
+                import os
+                from pathlib import Path
+
+                run = Path(os.environ["RUN"])
+                collection = json.loads((run / "dataset/collection_summary.json").read_text())
+                training = json.loads((run / "checkpoints/training_complete.json").read_text())
+                config = json.loads((run / "checkpoints/policy_config.json").read_text())
+                milestones = json.loads((run / "training-eval/progress.json").read_text())
+                evaluation = json.loads((run / "evaluation.json").read_text())
+                cameras = ["angle", "left_wrist", "right_wrist"]
+                assert collection["attempted_episodes"] == 270
+                assert collection["camera_names"] == cameras
+                assert training["train_episodes"] == 250
+                assert training["validation_episodes"] == 20
+                assert training["progress_condition"] is True
+                assert config["camera_names"] == cameras
+                assert config["qpos_dim"] == 15
+                assert [item["episodes"] for item in milestones["results"]] == [20] * 5
+                assert evaluation["episodes"] == 50
+                assert evaluation["camera_names"] == cameras
+                assert evaluation["progress_condition"] is True
+                summary = {
+                    "schema": "original-act-task-3pv-wrists-v1",
+                    "task": os.environ["RUNTIME_TASK"],
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "data": {
+                        "episodes": 270,
+                        "train_episodes": 250,
+                        "validation_episodes": 20,
+                        "source_successes": collection["source_successes"],
+                        "joint_replay_successes": collection["replay_successes"],
+                        "camera_names": cameras,
+                        "resolution": [480, 640],
+                    },
+                    "policy_input": "angle plus both wrist RGB cameras, joints, and normalized episode progress",
+                    "training": training,
+                    "config": config,
+                    "milestone_evaluation": milestones,
+                    "evaluation": evaluation,
+                }
+                (run / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                with (run / "SHA256SUMS").open("w") as stream:
+                    for relative in (
+                        "checkpoints/policy_best.ckpt", "checkpoints/dataset_stats.pkl",
+                        "dataset/collection_summary.json", "evaluation.json", "summary.json",
+                    ):
+                        path = run / relative
+                        stream.write(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")
+                PY
+                date --iso-8601=seconds | tee "$RUN/completed_at.txt"
+                cp "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/pytest.log" "$OUTPUT"/
+                echo "ORIGINAL_ACT_TASK_3PV_WRISTS_COMPLETE task=$TASK root=$RUN"

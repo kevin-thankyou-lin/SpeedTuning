@@ -53,6 +53,7 @@ def test_physics_instability_becomes_failed_terminal_transition(monkeypatch):
 
     assert done
     assert not info["success"]
+    assert info["first_success_step"] is None
     assert "invalid simulated state" in info["physics_error"]
     assert observation.shape == (env.obs_space,)
     assert np.isfinite(reward)
@@ -89,6 +90,7 @@ def test_cli_environment_can_terminate_on_success():
         env.close()
     assert result["success"]
     assert result["physics_steps"] < 400
+    assert result["first_success_step"] == result["physics_steps"]
 
 
 def test_cli_environment_reuses_explicit_object_pose():

@@ -80,13 +80,19 @@ class ChunkedActionSource:
     """Advance an arbitrary joint-action chunk predictor by a requested speed."""
 
     def __init__(self, predictor):
-        self.runner = ChunkedPolicyRunner(predictor)
+        self.runner = (
+            predictor
+            if getattr(predictor, "per_physics_step_action", False)
+            else ChunkedPolicyRunner(predictor)
+        )
 
     def reset(self):
         self.runner.reset()
 
     def begin_decision(self, timestep, speed):
-        self.runner.begin_decision(timestep.observation, speed=speed)
+        begin = getattr(self.runner, "begin_decision", None)
+        if begin is not None:
+            begin(timestep.observation, speed=speed)
 
     def action(self, timestep, speed):
         return self.runner.action(timestep.observation, speed=speed)
@@ -164,6 +170,7 @@ class SpeedPolicyEnv:
         self.obs_space = single_observation_dim * self.frame_stack
         self.cur_ts = None
         self.cur_success = False
+        self.first_success_step = None
         self.policy_time = 0.0
         self.physics_steps = 0
         self.speed_list = []
@@ -179,6 +186,7 @@ class SpeedPolicyEnv:
         if reset_encoder is not None:
             reset_encoder()
         self.cur_success = False
+        self.first_success_step = None
         self.policy_time = 0.0
         self.physics_steps = 0
         self.speed_list = []
@@ -301,6 +309,7 @@ class SpeedPolicyEnv:
                 "speed": speed,
                 "policy_time": self.policy_time,
                 "physics_steps": self.physics_steps,
+                "first_success_step": self.first_success_step,
                 "task_reward": 0.0,
                 "target_reward": self.env.task.max_reward,
                 "physics_error": str(exc),
@@ -325,6 +334,8 @@ class SpeedPolicyEnv:
         task_reward = float(self.cur_ts.reward or 0)
         if task_reward >= self.env.task.max_reward:
             self.cur_success = True
+            if self.first_success_step is None:
+                self.first_success_step = self.physics_steps
         timed_out = (
             self.policy_time >= self.episode_len
             or self.physics_steps >= self.max_physics_steps
@@ -339,6 +350,7 @@ class SpeedPolicyEnv:
             "speed": speed,
             "policy_time": self.policy_time,
             "physics_steps": self.physics_steps,
+            "first_success_step": self.first_success_step,
             "task_reward": task_reward,
             "target_reward": self.env.task.max_reward,
         }
@@ -459,7 +471,16 @@ def create_speed_env(
         )
     if getattr(observation_encoder, "requires_images", False) and not render_images:
         raise ValueError("The configured speed observation encoder requires images")
-    render_camera_names = getattr(observation_encoder, "render_camera_names", None)
+    policy_camera_names = tuple(
+        getattr(chunk_predictor, "render_camera_names", ())
+    )
+    observation_camera_names = tuple(
+        getattr(observation_encoder, "render_camera_names", ())
+    )
+    requested_cameras = tuple(
+        dict.fromkeys((*policy_camera_names, *observation_camera_names))
+    )
+    render_camera_names = requested_cameras or None
 
     if chunk_predictor is None:
         env = make_ee_sim_env(

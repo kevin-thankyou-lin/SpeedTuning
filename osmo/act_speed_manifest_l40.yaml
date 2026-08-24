@@ -2,7 +2,7 @@ version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
 workflow:
-  name: speedtuning-act-speed-manifest-20260824-v1
+  name: speedtuning-act-speed-manifest-20260824-v2
   timeout:
     exec_timeout: 2h
     queue_timeout: 4h
@@ -45,7 +45,7 @@ workflow:
                 cd "$CODE"
                 command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
                 uv python install 3.10
-                uv sync --frozen --python 3.10 --extra learned --extra test
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
                 .venv/bin/python -m pytest -q tests/test_original_act_speed_adapter.py
                 .venv/bin/python scripts/create_act_speed_manifest.py \
                   --contract experiments/act_speed_benchmark_v1/contract.json \

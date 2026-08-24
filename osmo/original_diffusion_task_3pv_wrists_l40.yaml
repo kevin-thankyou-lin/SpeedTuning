@@ -5,8 +5,10 @@ default-values:
   act_root: /mnt/amlfs-04/home/linke/speedtuning-original-act/speedtuning-original-act-pick-3pv-wrists-20260824-v1/pick
   milestone_seed_base: 9400000
   final_seed_base: 9150000
+# The ACT roots below are mounted on groot-l40-04. Submit this workflow only
+# with `--pool groot-l40-04`; the preflight receipt fails closed otherwise.
 workflow:
-  name: speedtuning-original-diffusion-{{ task }}-3pv-wrists-20260824-v2
+  name: speedtuning-original-diffusion-{{ task }}-3pv-wrists-20260824-v3
   timeout:
     exec_timeout: 72h
     queue_timeout: 12h
@@ -37,7 +39,7 @@ workflow:
                 set -euo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
                 SOURCE_COMMIT=a3a15ac2c0c452a3d43ad98be9eda8610969a91a
-                EXPERIMENT=speedtuning-original-diffusion-${TASK}-3pv-wrists-20260824-v2
+                EXPERIMENT=speedtuning-original-diffusion-${TASK}-3pv-wrists-20260824-v3
                 PERSIST_PARENT=/mnt/amlfs-04/home/linke/speedtuning-original-diffusion
                 RUN=$PERSIST_PARENT/$EXPERIMENT/$TASK
                 DATASET=$ACT_ROOT/dataset
@@ -55,17 +57,57 @@ workflow:
                 export MKL_NUM_THREADS=4
                 export TOKENIZERS_PARALLELISM=false
                 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-                export RUN TASK RUNTIME_TASK SOURCE_COMMIT ACT_SPLIT DATASET
+                export RUN TASK RUNTIME_TASK SOURCE_COMMIT ACT_ROOT ACT_SPLIT DATASET
                 export MILESTONE_SEED_BASE FINAL_SEED_BASE
 
-                test -d "$DATASET"
-                test -s "$ACT_ROOT/dataset/collection_summary.json"
-                test -s "$ACT_SPLIT"
-                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 270
+                mkdir -p "$OUTPUT"
+                python - <<'PY'
+                import hashlib
+                import json
+                import os
+                from pathlib import Path
+
+                task = os.environ["TASK"]
+                root = Path(os.environ["ACT_ROOT"])
+                dataset = Path(os.environ["DATASET"])
+                summary = dataset / "collection_summary.json"
+                split_path = Path(os.environ["ACT_SPLIT"])
+                episodes = sorted(dataset.glob("episode_*.hdf5")) if dataset.is_dir() else []
+                receipt = {
+                    "schema": "original-diffusion-input-preflight-v1",
+                    "task": task,
+                    "act_root": str(root),
+                    "checks": {
+                        "root": root.is_dir(),
+                        "dataset": dataset.is_dir(),
+                        "collection_summary": summary.is_file() and summary.stat().st_size > 0,
+                        "split": split_path.is_file() and split_path.stat().st_size > 0,
+                        "episode_count": len(episodes),
+                    },
+                }
+                passed = all(
+                    receipt["checks"][key]
+                    for key in ("root", "dataset", "collection_summary", "split")
+                ) and len(episodes) == 270
+                if passed:
+                    split = json.loads(split_path.read_text())
+                    receipt["checks"]["train_count"] = len(split["train"])
+                    receipt["checks"]["validation_count"] = len(split["validation"])
+                    receipt["checks"]["split_sha256"] = hashlib.sha256(split_path.read_bytes()).hexdigest()
+                    receipt["checks"]["collection_summary_sha256"] = hashlib.sha256(summary.read_bytes()).hexdigest()
+                    passed = len(split["train"]) == 250 and len(split["validation"]) == 20
+                receipt["passed"] = passed
+                output = Path("/osmo/run/outputs") / task / "preflight.json"
+                output.write_text(json.dumps(receipt, indent=2) + "\n")
+                print(json.dumps(receipt, sort_keys=True))
+                raise SystemExit(0 if passed else 1)
+                PY
                 test ! -e "$RUN" || { echo "refusing to overwrite $RUN" >&2; exit 30; }
                 mkdir -p "$SMOKE" "$CHECKPOINTS" "$MILESTONES" "$OUTPUT"
+                cp "$OUTPUT/preflight.json" "$RUN/preflight.json"
                 preserve_receipts() {
                   for relative in \
+                    preflight.json \
                     smoke/contract.json smoke/gate.json \
                     checkpoints/training_complete.json training-eval/progress.json \
                     evaluation.json summary.json SHA256SUMS \
@@ -207,6 +249,7 @@ workflow:
                 (run / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
                 with (run / "SHA256SUMS").open("w") as stream:
                     relatives = [
+                        "preflight.json",
                         "checkpoints/policy_best.pt", "checkpoints/training_complete.json",
                         "evaluation.json", "smoke/contract.json", "smoke/gate.json",
                         "training-eval/progress.json", "summary.json",

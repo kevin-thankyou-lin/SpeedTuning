@@ -1,0 +1,67 @@
+version: 2
+workflow:
+  name: speedtuning-original-diffusion-inputs-preflight-20260824-v1
+  timeout:
+    exec_timeout: 10m
+    queue_timeout: 1h
+  resources:
+    default:
+      cpu: 1
+      memory: 2Gi
+      platform: ovx-l40
+      storage: 1Gi
+  groups:
+    - name: original-diffusion-inputs-preflight-group
+      tasks:
+        - name: original-diffusion-inputs-preflight
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/preflight.sh]
+          files:
+            - path: /tmp/preflight.sh
+              contents: |-
+                set -uo pipefail
+                OUTPUT=/osmo/run/outputs/preflight.json
+                mkdir -p "$(dirname "$OUTPUT")"
+                python - <<'PY'
+                import hashlib
+                import json
+                from pathlib import Path
+
+                roots = {
+                    "pick": Path("/mnt/amlfs-04/home/linke/speedtuning-original-act/speedtuning-original-act-pick-3pv-wrists-20260824-v1/pick"),
+                    "tea": Path("/mnt/amlfs-04/home/linke/speedtuning-original-act/speedtuning-original-act-tea-3pv-wrists-20260823-v1/tea"),
+                    "insertion": Path("/mnt/amlfs-04/home/linke/speedtuning-original-act/speedtuning-original-act-insertion-3pv-wrists-20260824-v1/insertion"),
+                }
+                result = {"schema": "original-diffusion-inputs-preflight-v1", "tasks": {}}
+                passed = True
+                for task, root in roots.items():
+                    dataset = root / "dataset"
+                    summary = dataset / "collection_summary.json"
+                    split_path = root / "checkpoints/split.json"
+                    episodes = sorted(dataset.glob("episode_*.hdf5")) if dataset.is_dir() else []
+                    checks = {
+                        "root": root.is_dir(),
+                        "dataset": dataset.is_dir(),
+                        "collection_summary": summary.is_file() and summary.stat().st_size > 0,
+                        "split": split_path.is_file() and split_path.stat().st_size > 0,
+                        "episode_count": len(episodes),
+                    }
+                    task_passed = all(
+                        checks[key] for key in ("root", "dataset", "collection_summary", "split")
+                    ) and checks["episode_count"] == 270
+                    if task_passed:
+                        split = json.loads(split_path.read_text())
+                        checks["train_count"] = len(split["train"])
+                        checks["validation_count"] = len(split["validation"])
+                        checks["split_sha256"] = hashlib.sha256(split_path.read_bytes()).hexdigest()
+                        task_passed = checks["train_count"] == 250 and checks["validation_count"] == 20
+                    checks["passed"] = task_passed
+                    result["tasks"][task] = checks
+                    passed &= task_passed
+                result["passed"] = passed
+                Path("/osmo/run/outputs/preflight.json").write_text(json.dumps(result, indent=2) + "\n")
+                print(json.dumps(result, sort_keys=True))
+                raise SystemExit(0 if passed else 1)
+                PY

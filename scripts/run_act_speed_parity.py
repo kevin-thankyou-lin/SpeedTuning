@@ -17,7 +17,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from act_integration import build_original_act_speed_adapter  # noqa: E402
+from act_integration import (  # noqa: E402
+    build_original_act_speed_adapter,
+    configure_act_inference_determinism,
+)
 from one_reset_phase_schedule import workspace_violation  # noqa: E402
 from original_act import set_seed  # noqa: E402
 from policy_speed_env import create_speed_env  # noqa: E402
@@ -135,6 +138,7 @@ def main() -> int:
         raise RuntimeError("run manifest source identity mismatch")
     if manifest.get("contract", {}).get("sha256") != sha256(args.contract):
         raise RuntimeError("run manifest contract identity mismatch")
+    inference_determinism = configure_act_inference_determinism(args.device)
 
     label = args.task_label
     task = contract["tasks"][label]
@@ -186,6 +190,7 @@ def main() -> int:
             "temporal_ensemble": {"enabled": True, "m": 0.01},
             "safety_monitor": "one_reset_phase_schedule.workspace_violation_every_physics_tick",
             "physics_error_policy": "count_as_failure_and_continue_bank",
+            "inference_determinism": inference_determinism,
         },
     }
     identity_hash = canonical_sha256(identity)

@@ -26,6 +26,13 @@ def validate_schedule(values) -> tuple[float, ...]:
     return schedule
 
 
+def rollout_metric_steps(result: dict) -> int:
+    """Return first-success steps when available, otherwise terminal steps."""
+
+    first_success = result.get("first_success_step")
+    return int(result["physics_steps"] if first_success is None else first_success)
+
+
 def estimate_phase_workload(result: dict) -> dict[str, float]:
     """Estimate native policy work per phase from one completed rollout.
 
@@ -35,13 +42,14 @@ def estimate_phase_workload(result: dict) -> dict[str, float]:
 
     workloads = {phase: 0.0 for phase in PHASES}
     decisions = list(result.get("phase_decisions", ()))
-    final_step = int(result["physics_steps"])
+    final_step = rollout_metric_steps(result)
     for index, decision in enumerate(decisions):
-        start = int(decision["physics_step"])
-        end = (
+        start = min(int(decision["physics_step"]), final_step)
+        end = min(
             int(decisions[index + 1]["physics_step"])
             if index + 1 < len(decisions)
-            else final_step
+            else final_step,
+            final_step,
         )
         phase = str(decision["phase"])
         if phase not in workloads:
@@ -163,6 +171,8 @@ def run_phase_schedule(
     object_pose=None,
     video_path: Path | None = None,
     observation_encoder=None,
+    chunk_predictor=None,
+    terminate_on_success=True,
 ) -> dict:
     """Run one schedule, choosing at reset and supplied phase entries."""
 
@@ -174,6 +184,8 @@ def run_phase_schedule(
         seed=int(seed),
         object_pose=object_pose,
         randomize_object_pose=object_pose is None,
+        chunk_predictor=chunk_predictor,
+        speed_values=ALLOWED_SPEEDS,
         observation_encoder=(
             OraclePhaseEncoder(task)
             if observation_encoder is None
@@ -181,10 +193,21 @@ def run_phase_schedule(
         ),
         decision_mode="phase_entry",
         decision_frame_skip=1,
-        terminate_on_success=True,
+        terminate_on_success=bool(terminate_on_success),
         save_video=video_path is not None,
         video_path="output_video.mp4" if video_path is None else video_path,
     )
+    if chunk_predictor is not None:
+        # Learned phase proprioception was sealed against FK-derived end-effector
+        # positions for joint-control ACT evaluation.  Keep that exact causal
+        # interface when the generic phase-schedule runner uses an ACT chunk
+        # predictor instead of the retained scripted waypoint controller.
+        from act_speed_benchmark import JointEffectorObservationWrapper
+
+        env.env = JointEffectorObservationWrapper(env.env)
+        env._environment_metadata["learned_phase_effector_source"] = (
+            "joint_fk_body_xpos"
+        )
     safety = None
     info = {"success": False, "physics_steps": 0, "policy_time": 0.0}
     try:
@@ -206,6 +229,8 @@ def run_phase_schedule(
                 if int(np.argmax(np.asarray(observation, dtype=np.float64))) != phase:
                     break
         steps = int(info["physics_steps"])
+        first_success_step = info.get("first_success_step")
+        metric_steps = steps if first_success_step is None else int(first_success_step)
         return {
             "task": task,
             "seed": int(seed),
@@ -213,8 +238,9 @@ def run_phase_schedule(
             "success": bool(info["success"]) and safety is None,
             "raw_task_success": bool(info["success"]),
             "physics_steps": steps,
+            "first_success_step": first_success_step,
             "success_only_acceleration": (
-                float(env.episode_len / max(steps, 1))
+                float(env.episode_len / max(metric_steps, 1))
                 if bool(info["success"]) and safety is None
                 else None
             ),

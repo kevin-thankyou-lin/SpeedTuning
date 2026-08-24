@@ -84,3 +84,25 @@ def test_expected_time_score_aggregates_repeated_detector_phases():
     score = score_schedule_change(anchor, [3, 1, 1, 1])
     assert score["predicted_anchor_steps"] == pytest.approx(40.0)
     assert score["predicted_candidate_steps"] == pytest.approx(35.0)
+
+
+def test_phase_workload_stops_at_first_success_for_full_horizon_rollout():
+    anchor = {
+        "schedule": [2, 1, 1, 1],
+        "physics_steps": 400,
+        "first_success_step": 40,
+        "phase_decisions": [
+            {"phase": "pre_grasp", "physics_step": 0, "speed": 2},
+            {"phase": "grasp_lift", "physics_step": 10, "speed": 1},
+            {"phase": "transport", "physics_step": 30, "speed": 1},
+            {"phase": "interaction", "physics_step": 35, "speed": 1},
+            {"phase": "transport", "physics_step": 80, "speed": 1},
+        ],
+    }
+
+    assert estimate_phase_workload(anchor) == {
+        "pre_grasp": 20.0,
+        "grasp_lift": 20.0,
+        "transport": 5.0,
+        "interaction": 5.0,
+    }

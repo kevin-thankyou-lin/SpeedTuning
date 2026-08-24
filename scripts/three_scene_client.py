@@ -45,6 +45,10 @@ def main() -> int:
     commands.add_parser("info")
     probe = commands.add_parser("probe")
     probe.add_argument("schedule")
+    score = commands.add_parser("score")
+    score.add_argument("anchor_schedule_hash")
+    score.add_argument("schedule")
+    score.add_argument("--safe-success-probability", type=float, required=True)
     backoff = commands.add_parser("backoff")
     backoff.add_argument("schedule_hash")
     backoff.add_argument("phase")
@@ -55,6 +59,10 @@ def main() -> int:
     payload = {"command": args.command}
     if args.command == "probe":
         payload["schedule"] = parse_schedule(args.schedule)
+    elif args.command == "score":
+        payload["anchor_schedule_hash"] = args.anchor_schedule_hash
+        payload["schedule"] = parse_schedule(args.schedule)
+        payload["safe_success_probability"] = args.safe_success_probability
     elif args.command == "backoff":
         payload["schedule_hash"] = args.schedule_hash
         payload["phase"] = args.phase

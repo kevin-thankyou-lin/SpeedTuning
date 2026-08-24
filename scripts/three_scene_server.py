@@ -22,8 +22,10 @@ from one_reset_phase_schedule import (
     ALLOWED_SPEEDS,
     PHASES,
     estimate_phase_workload,
+    rollout_metric_steps,
     run_phase_schedule,
     sample_object_pose,
+    score_schedule_change,
     validate_schedule,
 )
 
@@ -170,6 +172,7 @@ class ThreeSceneServer:
             "success": result["success"],
             "raw_task_success": result["raw_task_success"],
             "physics_steps": result["physics_steps"],
+            "first_success_step": result.get("first_success_step"),
             "safety_violation": result["safety_violation"],
             "phase_decisions": result["phase_decisions"],
             "phase_workload_steps": estimate_phase_workload(result),
@@ -223,7 +226,7 @@ class ThreeSceneServer:
             finalists,
             key=lambda identifier: (
                 statistics.fmean(
-                    value["physics_steps"]
+                    rollout_metric_steps(value)
                     for value in self.state["candidates"][identifier]["discovery"]
                 ),
                 identifier,
@@ -247,7 +250,11 @@ class ThreeSceneServer:
             rollouts = self.state["candidates"][identifier]["discovery"]
             successes = [value for value in rollouts if successful(value)]
             speed_steps = successes or rollouts
-            return (-len(successes), statistics.fmean(value["physics_steps"] for value in speed_steps), identifier)
+            return (
+                -len(successes),
+                statistics.fmean(rollout_metric_steps(value) for value in speed_steps),
+                identifier,
+            )
 
         return min(completed, key=key)
 
@@ -303,6 +310,46 @@ class ThreeSceneServer:
             "ladder_evidence": self.state["ladder_evidence"],
             "selected_schedule_hash": self.state["selected_schedule_hash"],
             "phase_observation": self.state["phase_observation"],
+        }
+
+    def score(self, identifier: str, schedule, safe_success_probability: float) -> dict:
+        candidate = self.state["candidates"].get(identifier)
+        if candidate is None or not self._safe_three(candidate):
+            raise ValueError("frontier score requires a safe 3/3 anchor")
+        values = [
+            score_schedule_change(
+                rollout,
+                schedule,
+                safe_success_probability=safe_success_probability,
+            )
+            for rollout in candidate["discovery"]
+        ]
+        phases = list(PHASES)
+        return {
+            "anchor_schedule_hash": identifier,
+            "anchor_schedule": candidate["schedule"],
+            "candidate_schedule": list(validate_schedule(schedule)),
+            "safe_success_probability": float(safe_success_probability),
+            "scene_scores": values,
+            "mean_phase_workload_steps": {
+                phase: statistics.fmean(
+                    value["phase_workload_steps"][phase] for value in values
+                )
+                for phase in phases
+            },
+            "mean_phase_predicted_steps_saved": {
+                phase: statistics.fmean(
+                    value["phase_predicted_steps_saved"][phase] for value in values
+                )
+                for phase in phases
+            },
+            "mean_predicted_absolute_steps_saved": statistics.fmean(
+                value["predicted_absolute_steps_saved"] for value in values
+            ),
+            "mean_expected_absolute_steps_saved": statistics.fmean(
+                value["expected_absolute_steps_saved"] for value in values
+            ),
+            "warning": "acquisition estimate only; probe supplies reliability evidence",
         }
 
     def probe(self, schedule) -> dict:
@@ -429,7 +476,9 @@ class ThreeSceneServer:
             "successful_mean_steps": (
                 None
                 if not successful_rollouts
-                else statistics.fmean(value["physics_steps"] for value in successful_rollouts)
+                else statistics.fmean(
+                    rollout_metric_steps(value) for value in successful_rollouts
+                )
             ),
             "rollouts": [self._public_rollout(value) for value in rollouts],
         }
@@ -522,6 +571,12 @@ class ThreeSceneServer:
             return self.info()
         if command == "probe":
             return self.probe(request.get("schedule"))
+        if command == "score":
+            return self.score(
+                str(request.get("anchor_schedule_hash")),
+                request.get("schedule"),
+                float(request.get("safe_success_probability")),
+            )
         if command == "backoff":
             return self.backoff(
                 str(request.get("schedule_hash")),

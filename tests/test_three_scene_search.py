@@ -18,6 +18,7 @@ def fake_rollout(task, schedule, seed, *, object_pose=None, video_path=None, obs
         "success": success,
         "raw_task_success": success,
         "physics_steps": steps,
+        "first_success_step": None if not success else steps,
         "success_only_acceleration": None if not success else 400 / steps,
         "safety_violation": None,
         "phase_decisions": [
@@ -62,6 +63,22 @@ def test_three_scene_rank_uses_measured_shared_bank(server):
     selection = json.loads((server.root / "public" / "SELECTION.json").read_text())
     assert selection["deployment_schedule"] == [3.0, 1.0, 1.0, 1.0]
     assert server.rank(finalists)["cache_hit"]
+
+
+def test_frontier_score_averages_marginal_saved_steps(server):
+    anchor = server.probe([2, 2, 2, 2])
+
+    score = server.score(
+        anchor["schedule_hash"], [3, 2, 2, 2], safe_success_probability=0.8
+    )
+
+    assert score["candidate_schedule"] == [3.0, 2.0, 2.0, 2.0]
+    assert score["mean_predicted_absolute_steps_saved"] > 0
+    assert score["mean_expected_absolute_steps_saved"] == pytest.approx(
+        0.8 * score["mean_predicted_absolute_steps_saved"]
+    )
+    assert score["mean_phase_predicted_steps_saved"]["pre_grasp"] > 0
+    assert score["mean_phase_predicted_steps_saved"]["grasp_lift"] == 0
 
 
 def test_native_baseline_is_external_fallback_not_finalist(server):

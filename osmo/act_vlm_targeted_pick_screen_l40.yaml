@@ -1,0 +1,63 @@
+version: 2
+default-values:
+  source_commit: REQUIRED_SOURCE_COMMIT
+workflow:
+  name: speedtuning-act-vlm-targeted-pick-screen-20260824-v1
+  timeout: {exec_timeout: 12h, queue_timeout: 12h}
+  resources:
+    default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 48Gi}
+  groups:
+    - name: targeted-screen-group
+      tasks:
+        - name: targeted-screen
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            SOURCE_COMMIT: "{{ source_commit }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
+                BASE_SOURCE=866c9f436caf0a73e5e08ef83be38cbe89a23a61
+                MANIFEST=$BENCHMARK/attempts/$BASE_SOURCE/run_manifest.json
+                DETECTOR=$BENCHMARK/frozen_detector
+                RUN=/mnt/amlfs-04/home/linke/speedtuning-act-vlm-targeted-pick-screen-v1/runs/$SOURCE_COMMIT/pick
+                CODE=/osmo/run/workspace/SpeedTuning-act-vlm-targeted-pick-screen
+                OUTPUT=/osmo/run/outputs/targeted-screen
+                export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 SPEEDTUNING_TORCH_THREADS=2 TOKENIZERS_PARALLELISM=false
+                test "$SOURCE_COMMIT" != REQUIRED_SOURCE_COMMIT
+                test -f "$MANIFEST"
+                test -f "$DETECTOR/rgb_proprio_phase_rn18.pt"
+                test ! -e "$RUN"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                .venv/bin/python -m pytest -q \
+                  tests/test_vlm_targeted_frontier.py \
+                  tests/test_act_vlm_targeted_pick_screen.py \
+                  tests/test_staged_vlm_frontier.py \
+                  tests/test_act_vlm_frontier_server.py \
+                  tests/test_one_reset_phase_schedule.py \
+                  tests/test_original_act_speed_adapter.py
+                mkdir -p "$RUN" "$OUTPUT"
+                .venv/bin/python scripts/run_act_vlm_targeted_pick_screen.py \
+                  --root "$RUN" --source-commit "$SOURCE_COMMIT" \
+                  --run-manifest "$MANIFEST" \
+                  --discovery-seeds 140220000,140220001,140220002 \
+                  --gate-seeds 140220100,140220101,140220102,140220103,140220104,140220105,140220106,140220107,140220108,140220109,140220110,140220111,140220112,140220113,140220114,140220115,140220116,140220117,140220118,140220119 \
+                  --reserved-final-seeds 140210000,140210001,140210002,140210003,140210004,140210005,140210006,140210007,140210008,140210009,140210010,140210011,140210012,140210013,140210014,140210015,140210016,140210017,140210018,140210019,140210020,140210021,140210022,140210023,140210024,140210025,140210026,140210027,140210028,140210029,140210030,140210031,140210032,140210033,140210034,140210035,140210036,140210037,140210038,140210039,140210040,140210041,140210042,140210043,140210044,140210045,140210046,140210047,140210048,140210049,140210050,140210051,140210052,140210053,140210054,140210055,140210056,140210057,140210058,140210059,140210060,140210061,140210062,140210063,140210064,140210065,140210066,140210067,140210068,140210069,140210070,140210071,140210072,140210073,140210074,140210075,140210076,140210077,140210078,140210079,140210080,140210081,140210082,140210083,140210084,140210085,140210086,140210087,140210088,140210089,140210090,140210091,140210092,140210093,140210094,140210095,140210096,140210097,140210098,140210099 \
+                  --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                  --detector-source "$DETECTOR/source" --device cuda \
+                  2>&1 | tee "$OUTPUT/run.log"
+                cp "$RUN/IDENTITY.json" "$RUN/DISCOVERY.json" \
+                  "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
+                echo ACT_VLM_TARGETED_PICK_SCREEN_COMPLETE source=$SOURCE_COMMIT

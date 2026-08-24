@@ -4,6 +4,7 @@ import pytest
 
 from scripts.audit_act_speed_benchmark import (
     DETECTOR_HASHES,
+    accumulate_incidents,
     canonical_sha256,
     render_markdown,
     verify_identity,
@@ -88,3 +89,13 @@ def test_rendered_table_uses_success_only_speedup_and_evidence_paths():
     assert "2.500x" in rendered
     assert "/evidence/selected.json" in rendered
     assert "/evidence/states" in rendered
+
+
+def test_incident_totals_include_search_final_and_native_stages():
+    totals = {"safety_violations": 0, "physics_errors": 0}
+
+    accumulate_incidents(totals, {"safety_violations": 0, "physics_errors": 1})
+    accumulate_incidents(totals, {"safety_violations": 2, "physics_errors": 0})
+    accumulate_incidents(totals, {"safety_violations": 0, "physics_errors": 0})
+
+    assert totals == {"safety_violations": 2, "physics_errors": 1}

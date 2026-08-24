@@ -56,6 +56,12 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def accumulate_incidents(totals: dict, result: dict) -> None:
+    """Add one verified stage summary to the benchmark-wide incident totals."""
+    totals["safety_violations"] += result["safety_violations"]
+    totals["physics_errors"] += result["physics_errors"]
+
+
 def verify_identity(path: Path, *, task: str, method: str, stage: str, seeds: list[int]) -> dict:
     value = load(path)
     recorded = value.get("identity_sha256")
@@ -247,8 +253,7 @@ def audit(args) -> dict:
         native = verify_summary(native_root, native_records, schema="act-speed-native-result-v1", identity=native_identity["identity_sha256"])
         native_results[task] = native
         totals["native_rollouts"] += 50
-        totals["safety_violations"] += native["safety_violations"]
-        totals["physics_errors"] += native["physics_errors"]
+        accumulate_incidents(totals, native)
         all_receipt_hashes.extend(native_hashes)
 
         for method in METHODS:
@@ -289,8 +294,8 @@ def audit(args) -> dict:
             evidence[f"{task}/{method}"] = {"search_root": str(search_root), "final_root": str(final_root)}
             totals["search_rollouts"] += 50
             totals["method_final_rollouts"] += 50
-            totals["safety_violations"] += final["safety_violations"]
-            totals["physics_errors"] += final["physics_errors"]
+            accumulate_incidents(totals, search)
+            accumulate_incidents(totals, final)
             all_receipt_hashes.extend(search_hashes + final_hashes)
 
     require(len(all_receipt_hashes) == 1950, "unexpected total receipt count")

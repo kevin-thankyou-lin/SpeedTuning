@@ -1,0 +1,163 @@
+version: 2
+default-values:
+  task: pick
+  runtime_task: pick_and_place
+  act_root: /mnt/amlfs-04/home/linke/speedtuning-original-act/speedtuning-original-act-pick-3pv-wrists-20260824-v1/pick
+  final_seed_base: 9150000
+workflow:
+  name: speedtuning-original-diffusion-{{ task }}-3pv-wrists-20260824-v1
+  timeout:
+    exec_timeout: 72h
+    queue_timeout: 12h
+  resources:
+    default:
+      cpu: 16
+      gpu: 1
+      memory: 96Gi
+      platform: ovx-l40
+      storage: 64Gi
+  groups:
+    - name: {{ task }}-original-diffusion-group
+      tasks:
+        - name: {{ task }}-original-diffusion
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            TASK: {{ task }}
+            RUNTIME_TASK: {{ runtime_task }}
+            ACT_ROOT: {{ act_root }}
+            FINAL_SEED_BASE: "{{ final_seed_base }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                SOURCE_COMMIT=a093fbf
+                EXPERIMENT=speedtuning-original-diffusion-${TASK}-3pv-wrists-20260824-v1
+                PERSIST_PARENT=/mnt/amlfs-04/home/linke/speedtuning-original-diffusion
+                RUN=$PERSIST_PARENT/$EXPERIMENT/$TASK
+                DATASET=$ACT_ROOT/dataset
+                ACT_SPLIT=$ACT_ROOT/checkpoints/split.json
+                SMOKE=$RUN/smoke
+                CHECKPOINTS=$RUN/checkpoints
+                OUTPUT=/osmo/run/outputs/$TASK
+                CODE=/osmo/run/workspace/SpeedTuning-$TASK-original-diffusion
+
+                export MUJOCO_GL=egl
+                export MPLBACKEND=Agg
+                export PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4
+                export MKL_NUM_THREADS=4
+                export TOKENIZERS_PARALLELISM=false
+                export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+                export RUN TASK RUNTIME_TASK SOURCE_COMMIT ACT_SPLIT DATASET FINAL_SEED_BASE
+
+                test -d "$DATASET"
+                test -s "$ACT_ROOT/dataset/collection_summary.json"
+                test -s "$ACT_SPLIT"
+                test "$(find "$DATASET" -maxdepth 1 -name 'episode_*.hdf5' | wc -l)" -eq 270
+                test ! -e "$RUN" || { echo "refusing to overwrite $RUN" >&2; exit 30; }
+                mkdir -p "$SMOKE" "$CHECKPOINTS" "$OUTPUT"
+                DATA_BEFORE=$(find "$DATASET" -maxdepth 1 -type f -printf '%f %s %T@\n' | sort | sha256sum | cut -d' ' -f1)
+                date --iso-8601=seconds | tee "$RUN/started_at.txt"
+
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse --short HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                PYTHON=$CODE/.venv/bin/python
+                "$PYTHON" -m pytest -q tests/test_original_diffusion.py tests/test_original_act.py \
+                  2>&1 | tee "$RUN/pytest.log"
+
+                # This gate uses one successful sealed ACT episode. Full training
+                # is unreachable unless both denoising overfit and same-seed
+                # closed-loop task success pass.
+                "$PYTHON" -m scripts.smoke_original_diffusion \
+                  --dataset-dir "$DATASET" --output-dir "$SMOKE" \
+                  --task "$RUNTIME_TASK" --updates 4000 --batch-size 32 \
+                  2>&1 | tee "$RUN/smoke.log"
+                "$PYTHON" - <<'PY'
+                import json, os
+                from pathlib import Path
+                gate = json.loads((Path(os.environ["RUN"]) / "smoke/gate.json").read_text())
+                assert gate["overfit_passed"] is True
+                assert gate["closed_loop_passed"] is True
+                assert gate["passed"] is True
+                PY
+
+                "$PYTHON" -m scripts.train_original_diffusion \
+                  --dataset-dir "$DATASET" --output-dir "$CHECKPOINTS" \
+                  --updates 100000 --batch-size 32 --workers 8 --seed 0 \
+                  --validation-episodes 20 --validation-batches 20 \
+                  --validation-every 5000 --checkpoint-every 10000 \
+                  --camera-names angle left_wrist right_wrist \
+                  2>&1 | tee "$RUN/train.log"
+                test -s "$CHECKPOINTS/policy_best.pt"
+                test -s "$CHECKPOINTS/training_complete.json"
+
+                "$PYTHON" -m scripts.evaluate_original_diffusion \
+                  --task "$RUNTIME_TASK" --checkpoint "$CHECKPOINTS/policy_best.pt" \
+                  --output "$RUN/evaluation.json" --num-rollouts 50 \
+                  --seed-base "$FINAL_SEED_BASE" \
+                  2>&1 | tee "$RUN/evaluate.log"
+
+                export DATA_BEFORE
+                "$PYTHON" - <<'PY'
+                import hashlib
+                import json
+                import os
+                import subprocess
+                from pathlib import Path
+
+                run = Path(os.environ["RUN"])
+                act_split = json.loads(Path(os.environ["ACT_SPLIT"]).read_text())
+                split = json.loads((run / "checkpoints/split.json").read_text())
+                training = json.loads((run / "checkpoints/training_complete.json").read_text())
+                smoke = json.loads((run / "smoke/gate.json").read_text())
+                evaluation = json.loads((run / "evaluation.json").read_text())
+                collection = json.loads((Path(os.environ["DATASET"]) / "collection_summary.json").read_text())
+                cameras = ["angle", "left_wrist", "right_wrist"]
+                assert collection["attempted_episodes"] == 270
+                assert collection["camera_names"] == cameras
+                assert split["train_episodes"] == 250 and split["validation_episodes"] == 20
+                assert split["train"] == [Path(path).name for path in act_split["train"]]
+                assert split["validation"] == [Path(path).name for path in act_split["validation"]]
+                assert training["config"]["prediction_horizon"] == 16
+                assert training["config"]["observation_horizon"] == 2
+                assert training["config"]["action_horizon"] == 8
+                assert training["config"]["camera_names"] == cameras
+                assert smoke["passed"] is True
+                assert evaluation["identity"]["seed_base"] == int(os.environ["FINAL_SEED_BASE"])
+                assert len(evaluation["rollouts"]) == 50
+                after = subprocess.check_output(
+                    "find \"$DATASET\" -maxdepth 1 -type f -printf '%f %s %T@\\n' | sort | sha256sum | cut -d' ' -f1",
+                    shell=True, text=True, env=os.environ,
+                ).strip()
+                assert after == os.environ["DATA_BEFORE"], "ACT dataset metadata changed"
+                summary = {
+                    "schema": "original-diffusion-task-3pv-wrists-v1",
+                    "task": os.environ["RUNTIME_TASK"],
+                    "source_commit": os.environ["SOURCE_COMMIT"],
+                    "act_root": str(Path(os.environ["DATASET"]).parent),
+                    "data": split,
+                    "normalization": "train-only global per-joint ranges to [-1,1]",
+                    "policy_input": "ordered angle, left_wrist, right_wrist RGB plus qpos and progress",
+                    "diffusion_horizons": {"prediction": 16, "observation": 2, "action": 8},
+                    "smoke_gate": smoke,
+                    "training": training,
+                    "evaluation": evaluation,
+                }
+                (run / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+                with (run / "SHA256SUMS").open("w") as stream:
+                    for relative in ("checkpoints/policy_best.pt", "checkpoints/training_complete.json", "evaluation.json", "smoke/gate.json", "summary.json"):
+                        path = run / relative
+                        stream.write(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {relative}\n")
+                PY
+                date --iso-8601=seconds | tee "$RUN/completed_at.txt"
+                cp "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/pytest.log" "$OUTPUT"/
+                echo "ORIGINAL_DIFFUSION_TASK_3PV_WRISTS_COMPLETE task=$TASK root=$RUN"

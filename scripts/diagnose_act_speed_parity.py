@@ -271,7 +271,6 @@ def main() -> int:
     if args.deterministic:
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
-        torch.use_deterministic_algorithms(True)
     checkpoint = args.checkpoint_root / "checkpoints/policy_best.ckpt"
     stats_path = args.checkpoint_root / "checkpoints/dataset_stats.pkl"
     config_path = args.checkpoint_root / "checkpoints/policy_config.json"
@@ -325,6 +324,7 @@ def main() -> int:
         "deterministic_inference": args.deterministic,
         "torch_runtime": {
             "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+            "determinism_scope": "cudnn_only",
             "cudnn_benchmark": torch.backends.cudnn.benchmark,
             "cudnn_deterministic": torch.backends.cudnn.deterministic,
             "cudnn_allow_tf32": torch.backends.cudnn.allow_tf32,

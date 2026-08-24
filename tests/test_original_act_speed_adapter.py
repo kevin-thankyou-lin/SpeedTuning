@@ -135,7 +135,25 @@ def test_uniform_one_uses_retained_dense_ledger_without_interpolation(monkeypatc
     adapter.action(_observation(), speed=1.0)
 
     assert adapter._uniform_one is True
+    assert adapter._predictions == []
     assert adapter._all_time_actions.shape == (5, 9, 14)
+
+
+def test_acceleration_reconstructs_live_history_from_uniform_dense_ledger():
+    first = np.stack([np.full(14, value) for value in (1.0, 2.0, 3.0, 4.0)])
+    second = np.stack([np.full(14, value) for value in (10.0, 20.0, 30.0, 40.0)])
+    adapter, _ = _adapter([first, second])
+
+    adapter.action(_observation(), speed=1.0)
+    action = adapter.action(_observation(), speed=2.0)
+
+    weights = np.exp(-0.01 * np.arange(2))
+    expected_normalized = np.dot(weights / weights.sum(), [2.0, 10.0])
+    np.testing.assert_allclose(
+        action, np.full(14, expected_normalized * 2.0 + 10.0), rtol=1e-6
+    )
+    assert adapter._uniform_one is False
+    assert [origin for origin, _ in adapter._predictions] == [0.0, 1.0]
 
 
 def test_qpos_normalization_matches_frozen_evaluator_dtype_order():

@@ -300,19 +300,35 @@ class OriginalACTSpeedAdapter:
             raise ValueError("speed must be finite and positive")
 
         chunk = self._model_chunk(observation)
-        self._predictions.append((self._policy_time, chunk))
-        oldest_allowed = self._policy_time - (self.num_queries - 1)
-        self._predictions = [
-            item for item in self._predictions if item[0] >= oldest_allowed
-        ]
-
         if self._uniform_one and speed == 1.0 and self._policy_time.is_integer():
             step = int(self._policy_time)
             self._all_time_actions[step, step : step + self.num_queries] = chunk
             candidates = self._all_time_actions[:, step]
             candidates = candidates[self.torch.all(candidates != 0, dim=1)]
         else:
+            if self._uniform_one:
+                if not self._policy_time.is_integer():
+                    raise RuntimeError("uniform ACT history ended at fractional time")
+                # Uniform execution deliberately retained no extra chunk
+                # objects. Reconstruct only the live history from the dense
+                # retained-evaluator ledger when acceleration first begins.
+                end = int(self._policy_time)
+                start = max(0, end - self.num_queries + 1)
+                self._predictions = [
+                    (
+                        float(origin),
+                        self._all_time_actions[
+                            origin, origin : origin + self.num_queries
+                        ],
+                    )
+                    for origin in range(start, end)
+                ]
             self._uniform_one = False
+            self._predictions.append((self._policy_time, chunk))
+            oldest_allowed = self._policy_time - (self.num_queries - 1)
+            self._predictions = [
+                item for item in self._predictions if item[0] >= oldest_allowed
+            ]
             candidates = []
             for origin, prediction in self._predictions:
                 offset = self._policy_time - origin

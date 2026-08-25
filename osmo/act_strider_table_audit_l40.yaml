@@ -6,7 +6,7 @@ default-values:
   strider_insertion_source: REQUIRED_STRIDER_INSERTION_SOURCE
   fixed_uniform_source: REQUIRED_FIXED_UNIFORM_SOURCE
 workflow:
-  name: speedtuning-act-strider-table-audit-20260825-v2
+  name: speedtuning-act-strider-table-audit-20260825-v3
   timeout: {exec_timeout: 2h, queue_timeout: 12h}
   resources:
     default: {cpu: 2, gpu: 0, memory: 8Gi, platform: ovx-l40, storage: 8Gi}
@@ -34,7 +34,7 @@ workflow:
                 FIXED=/mnt/amlfs-04/home/linke/speedtuning-act-fixed-uniform-final-v1
                 REPORT=/mnt/amlfs-04/home/linke/speedtuning-act-strider-baseline-v1/reports/$SOURCE_COMMIT
                 CODE=/osmo/run/workspace/SpeedTuning-act-strider-audit
-                OUTPUT=/osmo/run/outputs
+                OUTPUT=/osmo/run/outputs/audit
                 test "$SOURCE_COMMIT" != REQUIRED_SOURCE_COMMIT
                 test "$STRIDER_PICK_SOURCE" != REQUIRED_STRIDER_PICK_SOURCE
                 test "$STRIDER_TEA_SOURCE" != REQUIRED_STRIDER_TEA_SOURCE

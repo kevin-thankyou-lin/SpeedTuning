@@ -1,0 +1,34 @@
+version: 2
+workflow:
+  name: speedtuning-act-strider-receipt-inspect-20260824-v1
+  timeout: {exec_timeout: 10m, queue_timeout: 12h}
+  resources:
+    default: {cpu: 1, gpu: 0, memory: 2Gi, platform: ovx-l40, storage: 2Gi}
+  groups:
+    - name: inspect-group
+      tasks:
+        - name: inspect
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/inspect.sh]
+          files:
+            - path: /tmp/inspect.sh
+              contents: |-
+                set -euo pipefail
+                ROOT=/mnt/amlfs-04/home/linke/speedtuning-act-strider-baseline-v1/runs
+                for TARGET in \
+                  "$ROOT/0e57760999bc01a1ef021904a83df96ab47c4e46/pick" \
+                  "$ROOT/0e57760999bc01a1ef021904a83df96ab47c4e46/insertion" \
+                  "$ROOT/3adaa1e986acce7b2f73953218adaa9c9b6a3789/tea"
+                do
+                  echo "TARGET=$TARGET"
+                  find "$TARGET/final/states" -maxdepth 1 -type f -name '*.json' | sort | wc -l
+                  for MARKER in IDENTITY.json RESULT.json COMPLETE.json search/public/SELECTION.json; do
+                    if test -f "$TARGET/$MARKER"; then
+                      sha256sum "$TARGET/$MARKER"
+                    else
+                      echo "MISSING $TARGET/$MARKER"
+                    fi
+                  done
+                done

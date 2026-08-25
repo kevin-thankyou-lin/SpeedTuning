@@ -22,6 +22,8 @@ EARLIER_BANK_METHODS = {
     "Rainbow RL",
     "AWE offline proxy",
     "SAIL-inspired",
+    "VOLT-style",
+    "VOLT-style (learned phase)",
 }
 
 
@@ -114,7 +116,7 @@ def method_style(method: str) -> dict:
     if method == "Rainbow RL":
         return {"color": "#e15759", "marker": "v", "size": 38, "zorder": 5}
     if method == "AWE offline proxy":
-        return {"color": "#b5b5b5", "marker": "P", "size": 34, "zorder": 3}
+        return {"color": "#6f6f6f", "marker": "P", "size": 40, "zorder": 7}
     if method == "SAIL-inspired":
         return {"color": "#008c95", "marker": "h", "size": 48, "zorder": 6}
     if method in {"VOLT-style", "VOLT-style (learned phase)"}:
@@ -126,7 +128,10 @@ def method_style(method: str) -> dict:
 
 def annotate(ax, value: Result) -> None:
     if FIXED_UNIFORM_RE.fullmatch(value.method):
-        if (value.task, value.method) == ("Tea", "Uniform 1.5x"):
+        if (value.task, value.method) in {
+            ("Pick", "Uniform 2.5x"),
+            ("Insertion", "Uniform 1.5x"),
+        }:
             return
         text = value.method.removeprefix("Uniform ").replace("x", "×")
         offset = {
@@ -135,19 +140,24 @@ def annotate(ax, value: Result) -> None:
         }.get((value.task, value.method), (4, 4))
     elif value.method == "STRIDER":
         text = {
-            "Pick": "STRIDER",
-            "Tea": "STRIDER = 1.5×",
-            "Insertion": "STRIDER = VOLT = 1×",
+            "Pick": "STRIDER\n= 2.5×",
+            "Tea": "STRIDER = 1×",
+            "Insertion": "STRIDER\n= 1.5×",
         }[value.task]
         offset = {
-            "Pick": (-45, -13),
-            "Tea": (-55, -20),
-            "Insertion": (-72, -22),
+            "Pick": (-35, 15),
+            "Tea": (-55, -19),
+            "Insertion": (-34, 16),
         }[value.task]
+    elif value.method == "AWE offline proxy":
+        if value.task != "Pick":
+            return
+        text = "AWE proxy*"
+        offset = (-53, -19)
     elif value.method == "SAIL-inspired":
         text = "SAIL-inspired*"
         offset = {
-            "Pick": (-48, 5),
+            "Pick": (-75, 28),
             "Tea": (-62, 6),
             "Insertion": (-67, 7),
         }[value.task]
@@ -155,9 +165,12 @@ def annotate(ax, value: Result) -> None:
         if value.task == "Insertion":
             return
         text = "VOLT-style*" if value.task == "Pick" else "VOLT = 1×"
-        offset = (4, 5) if value.task == "Pick" else (-43, 8)
+        offset = (-44, -20) if value.task == "Pick" else (-43, 8)
     else:
         return
+    arrowprops = None
+    if value.method in {"AWE offline proxy", "SAIL-inspired"}:
+        arrowprops = {"arrowstyle": "-", "color": "#777777", "linewidth": 0.5}
     ax.annotate(
         text,
         (success_axis_position(value.success_rate_percent), value.throughput_delta),
@@ -165,6 +178,7 @@ def annotate(ax, value: Result) -> None:
         textcoords="offset points",
         fontsize=6.2,
         color="#303030",
+        arrowprops=arrowprops,
         zorder=8,
     )
 
@@ -251,11 +265,11 @@ def plot(results: list[Result], output_prefix: Path) -> None:
         ax.axhline(0, color="#c7c7c7", linewidth=0.8, zorder=0)
         ax.set_title(task, fontweight="semibold", pad=4)
         ax.set_xlim(-1, 103)
-        ax.set_ylim(-80, 150)
+        ax.set_ylim(-80, 185)
         success_ticks = (0, 40, 80, 85, 90, 92, 94, 96, 98, 100)
         ax.set_xticks([success_axis_position(value) for value in success_ticks])
         ax.set_xticklabels([str(value) for value in success_ticks], rotation=35, ha="right")
-        ax.set_yticks((-75, -50, 0, 50, 100, 150))
+        ax.set_yticks((-75, -50, 0, 50, 100, 150, 175))
         ax.grid(True, color="#ededed", linewidth=0.55, zorder=-1)
         ax.spines[["top", "right"]].set_visible(False)
         ax.set_xlabel("Success rate (%)")
@@ -267,7 +281,7 @@ def plot(results: list[Result], output_prefix: Path) -> None:
         Line2D([], [], color="#59a14f", marker="s", markerfacecolor="none", linestyle="none", markersize=4, label="Learned subtask"),
         Line2D([], [], color="#f28e2b", marker="^", markerfacecolor="none", linestyle="none", markersize=4, label="Tabular RL"),
         Line2D([], [], color="#e15759", marker="v", markerfacecolor="none", linestyle="none", markersize=4, label="Rainbow RL"),
-        Line2D([], [], color="#b5b5b5", marker="P", markerfacecolor="none", linestyle="none", markersize=4, label="AWE proxy"),
+        Line2D([], [], color="#6f6f6f", marker="P", markerfacecolor="none", linestyle="none", markersize=4, label="AWE proxy"),
         Line2D([], [], color="#008c95", marker="h", markerfacecolor="none", linestyle="none", markersize=5, label="SAIL-inspired*"),
         Line2D([], [], color="#d55e00", marker="d", linestyle="none", markersize=4.5, label="VOLT-style*"),
         Line2D([], [], color="#7b2cbf", marker="*", linestyle="none", markersize=8, label="STRIDER"),

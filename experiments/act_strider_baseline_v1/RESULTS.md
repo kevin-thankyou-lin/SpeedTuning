@@ -4,7 +4,7 @@ Successful episodes are charged through first success; failures are charged
 through their terminal horizon. Thus, throughput includes the cost of failures
 rather than reporting speed only on successful episodes.
 
-The filled native/uniform/STRIDER/VOLT-style rows use one fresh paired
+The filled native/uniform/STRIDER rows use one fresh paired STRIDER v4
 50-seed bank per task. The remaining hollow-marker baselines use the earlier
 sealed 50-seed bank. Every throughput delta uses the matching native control
 from its own bank. Comparisons within either bank are paired; cross-bank points
@@ -14,43 +14,47 @@ provide task-distribution context and are not same-seed head-to-head tests.
 |---|---|---:|---:|---:|---:|---:|---:|
 | Pick | Native 1x | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
 | Pick | Uniform 1.5x | 49/50 | 0.98 | 1.442x | +40.1% | 0 | 0 |
-| Pick | Uniform 2x | 47/50 | 0.94 | 1.857x | +70.7% | 0 | 0 |
-| Pick | Uniform 2.5x | 46/50 | 0.92 | 2.256x | +102.1% | 0 | 0 |
+| Pick | Uniform 2x | 49/50 | 0.98 | 1.858x | +80.7% | 0 | 0 |
+| Pick | Uniform 2.5x | 49/50 | 0.98 | 2.264x | +120.4% | 0 | 0 |
 | Pick | Uniform 3x | 45/50 | 0.90 | 2.679x | +133.4% | 0 | 0 |
+| Pick | Uniform 3.5x | 45/50 | 0.90 | 3.136x | +173.1% | 0 | 0 |
+| Pick | STRIDER | 49/50 | 0.98 | 2.264x | +120.4% | 0 | 0 |
 | Pick | Learned subtask | 50/50 | 1.00 | 1.341x | +34.1% | 0 | 0 |
 | Pick | Tabular RL | 50/50 | 1.00 | 1.522x | +52.2% | 0 | 0 |
 | Pick | Rainbow RL | 50/50 | 1.00 | 1.792x | +79.2% | 0 | 0 |
 | Pick | AWE offline proxy | 50/50 | 1.00 | 1.038x | +3.8% | 0 | 0 |
 | Pick | SAIL-inspired | 50/50 | 1.00 | 1.044x | +4.4% | 0 | 0 |
 | Pick | VOLT-style (learned phase) | 48/50 | 0.96 | 2.052x | +94.2% | 0 | 0 |
-| Pick | STRIDER | 47/50 | 0.94 | 1.857x | +70.7% | 0 | 0 |
 | Tea | Native 1x | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
-| Tea | Uniform 1.5x | 45/50 | 0.90 | 1.450x | +29.3% | 0 | 0 |
-| Tea | Uniform 2x | 38/50 | 0.76 | 1.875x | +40.6% | 0 | 0 |
-| Tea | Uniform 2.5x | 22/50 | 0.44 | 2.304x | -0.8% | 0 | 0 |
-| Tea | Uniform 3x | 6/50 | 0.12 | 2.703x | -68.0% | 0 | 0 |
+| Tea | Uniform 1.5x | 45/50 | 0.90 | 1.456x | +29.7% | 0 | 0 |
+| Tea | Uniform 2x | 41/50 | 0.82 | 1.900x | +53.6% | 0 | 0 |
+| Tea | Uniform 2.5x | 18/50 | 0.36 | 2.311x | -19.3% | 0 | 0 |
+| Tea | Uniform 3x | 5/50 | 0.10 | 2.717x | -73.5% | 0 | 0 |
+| Tea | Uniform 3.5x | 8/50 | 0.16 | 3.126x | -50.6% | 0 | 0 |
+| Tea | STRIDER | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
 | Tea | Learned subtask | 49/50 | 0.98 | 1.530x | +49.6% | 0 | 0 |
 | Tea | Tabular RL | 49/50 | 0.98 | 1.449x | +41.7% | 0 | 0 |
 | Tea | Rainbow RL | 46/50 | 0.92 | 1.532x | +40.3% | 0 | 0 |
 | Tea | AWE offline proxy | 50/50 | 1.00 | 1.114x | +11.4% | 0 | 0 |
 | Tea | SAIL-inspired | 49/50 | 0.98 | 1.138x | +11.1% | 0 | 0 |
 | Tea | VOLT-style (learned phase) | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
-| Tea | STRIDER | 45/50 | 0.90 | 1.450x | +29.3% | 0 | 0 |
-| Insertion | Native 1x | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
-| Insertion | Uniform 1.5x | 49/50 | 0.98 | 1.441x | +41.0% | 0 | 0 |
-| Insertion | Uniform 2x | 42/50 | 0.84 | 1.868x | +55.5% | 0 | 0 |
-| Insertion | Uniform 2.5x | 39/50 | 0.78 | 2.278x | +76.6% | 0 | 0 |
-| Insertion | Uniform 3x | 26/50 | 0.52 | 2.683x | +38.5% | 0 | 0 |
+| Insertion | Native 1x | 45/50 | 0.90 | 1.000x | +0.0% | 0 | 0 |
+| Insertion | Uniform 1.5x | 47/50 | 0.94 | 1.446x | +52.2% | 0 | 0 |
+| Insertion | Uniform 2x | 39/50 | 0.78 | 1.871x | +62.2% | 0 | 0 |
+| Insertion | Uniform 2.5x | 38/50 | 0.76 | 2.279x | +93.5% | 0 | 0 |
+| Insertion | Uniform 3x | 30/50 | 0.60 | 2.673x | +79.6% | 0 | 0 |
+| Insertion | Uniform 3.5x | 7/50 | 0.14 | 3.093x | -51.5% | 0 | 0 |
+| Insertion | STRIDER | 47/50 | 0.94 | 1.446x | +52.2% | 0 | 0 |
 | Insertion | Learned subtask | 48/50 | 0.96 | 1.426x | +39.4% | 0 | 0 |
 | Insertion | Tabular RL | 46/50 | 0.92 | 1.141x | +6.8% | 0 | 0 |
 | Insertion | Rainbow RL | 44/50 | 0.88 | 1.596x | +41.6% | 0 | 0 |
 | Insertion | AWE offline proxy | 50/50 | 1.00 | 1.114x | +14.0% | 0 | 0 |
 | Insertion | SAIL-inspired | 49/50 | 0.98 | 1.040x | +4.1% | 0 | 0 |
 | Insertion | VOLT-style (learned phase) | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
-| Insertion | STRIDER | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
 
-STRIDER's primary row is its frozen search output. It retained uniform `2x` on
-Pick, uniform `1.5x` on Tea, and failed closed to native on Insertion. The
+STRIDER's primary row is its frozen v4 search output. It retained uniform
+`2.5x` on Pick, failed closed to native on Tea, and retained uniform `1.5x` on
+Insertion. The
 VOLT-style proxy selected `[2.5, 2, 2.5, 2]` on Pick and failed closed to native
 on Tea and Insertion. Selection-bank outcomes were not revised after opening
 the final banks.
@@ -69,8 +73,31 @@ and
 Green curves mark empirical non-dominated methods within each task; dashed gray
 curves connect the paired uniform schedules, including native `1x`. The older
 `Uniform sweep` rows are intentionally omitted because they are outcomes of
-this same controller family on a different bank, not a distinct method. Hollow points come from the
-earlier sealed baseline bank and filled points from the fresh STRIDER/VOLT bank.
+this same controller family on a different bank, not a distinct method. Hollow
+points come from the earlier sealed baseline bank and filled points from the
+fresh STRIDER v4 bank.
+
+## Conservative STRIDER v4 and uniform 3.5x audit
+
+- STRIDER v4 source: `c52a55501cf33a44e5007f3aacb4810111dc8afc`.
+- Search accounting: `45` Pick, `50` Tea, and `45` Insertion rollouts. Each
+  selection was frozen and hash-sealed before its final bank opened.
+- Final accounting: `250` fresh controller rollouts per task (`750` total) on
+  one task-specific 50-seed bank; final results were unavailable to search.
+- Result SHA-256 (Pick):
+  `e73ef1fc3a27dc80b014343aff98f23921f5ef1537a016eb3c5ce34967d76f24`.
+- Result SHA-256 (Tea):
+  `318f1f3712d5ed245810ade2ce32d745b820cd0282ee5bd501db888efdcc26c3`.
+- Result SHA-256 (Insertion):
+  `7e0e6c2bd106d97489477ba12a50b0052ae49a7eb551dad1d377aa9635739af4`.
+- Uniform `3.5x` source: `5151498551b0ce39efe791f1d50dbdcb4b9fd26c`.
+  It added `50` matched-bank rollouts per task and reran no native controls.
+- Uniform `3.5x` result SHA-256 (Pick):
+  `849721249a6a1715c28182b2d372982197a02b669d6c105c60b530c2a9c0e30f`.
+- Uniform `3.5x` result SHA-256 (Tea):
+  `7cc866b9024c1531afd36429945ff3cc67c091304cc6de3980bfe381b6a9aca2`.
+- Uniform `3.5x` result SHA-256 (Insertion):
+  `be9e8e77efd2d47284438909c1857f6d60925d8b1fdce8cb23d7b3194cc3b3fe`.
 
 ## Audit receipt
 

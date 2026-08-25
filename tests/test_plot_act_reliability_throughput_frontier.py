@@ -46,6 +46,8 @@ def test_success_axis_expands_high_reliability_and_compresses_low_reliability():
 def test_sail_and_volt_have_explicit_plot_styles():
     assert module.method_style("SAIL-inspired")["color"] != "#b5b5b5"
     assert module.method_style("VOLT-style")["marker"] == "d"
+    assert "VOLT-style (learned phase)" in module.EARLIER_BANK_METHODS
+    assert module.method_style("AWE offline proxy")["zorder"] > 3
 
 
 def test_uniform_family_includes_3p5_and_excludes_legacy_alias():

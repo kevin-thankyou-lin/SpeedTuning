@@ -175,6 +175,7 @@ def run_phase_schedule(
     observation_encoder=None,
     chunk_predictor=None,
     terminate_on_success=True,
+    record_attribution_telemetry=False,
 ) -> dict:
     """Run one schedule, choosing at reset and supplied phase entries."""
 
@@ -212,6 +213,7 @@ def run_phase_schedule(
         )
     safety = None
     info = {"success": False, "physics_steps": 0, "policy_time": 0.0}
+    attribution_telemetry = []
     try:
         policy.reset()
         observation = env.reset()
@@ -226,8 +228,31 @@ def run_phase_schedule(
             )
             speed = policy.select_speed(observation, context)
             while not done:
-                observation, _, done, info = env.step(speed, quantized=False)
+                observation, reward, done, info = env.step(speed, quantized=False)
                 safety = safety or workspace_violation(task, env.cur_ts.observation)
+                if record_attribution_telemetry:
+                    env_state = np.asarray(
+                        env.cur_ts.observation["env_state"], dtype=np.float64
+                    )
+                    attribution_telemetry.append(
+                        {
+                            "physics_step": int(env.physics_steps),
+                            "policy_time": float(env.policy_time),
+                            "observed_phase": PHASES[
+                                int(
+                                    np.argmax(np.asarray(observation, dtype=np.float64))
+                                )
+                            ],
+                            "task_reward": float(0.0 if reward is None else reward),
+                            "object_positions": [
+                                [
+                                    float(value)
+                                    for value in env_state[index * 7 : index * 7 + 3]
+                                ]
+                                for index in range(TASK_OBJECTS[task])
+                            ],
+                        }
+                    )
                 if int(np.argmax(np.asarray(observation, dtype=np.float64))) != phase:
                     break
         steps = int(info["physics_steps"])
@@ -250,6 +275,8 @@ def run_phase_schedule(
             "phase_decisions": policy.decisions,
             "video_path": None if video_path is None else str(video_path),
         }
+        if record_attribution_telemetry:
+            result["attribution_telemetry"] = attribution_telemetry
         if info.get("physics_error") is not None:
             result["physics_error"] = str(info["physics_error"])
         return result

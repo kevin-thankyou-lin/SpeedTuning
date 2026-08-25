@@ -133,7 +133,15 @@ class ACTFrontierRuntime:
     def encoder(self):
         return LearnedPhaseEncoder(**self.detector)
 
-    def rollout(self, schedule, seed: int, *, object_pose=None, video_path=None):
+    def rollout(
+        self,
+        schedule,
+        seed: int,
+        *,
+        object_pose=None,
+        video_path=None,
+        record_attribution_telemetry=False,
+    ):
         return run_phase_schedule(
             self.task,
             schedule,
@@ -143,6 +151,7 @@ class ACTFrontierRuntime:
             observation_encoder=self.encoder(),
             chunk_predictor=self.adapter,
             terminate_on_success=False,
+            record_attribution_telemetry=record_attribution_telemetry,
         )
 
     def identity(self) -> dict:

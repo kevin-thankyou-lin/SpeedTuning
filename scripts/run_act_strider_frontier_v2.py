@@ -223,11 +223,20 @@ def pareto_names(summaries: dict[str, dict]) -> list[str]:
 
 
 class RolloutLedger:
-    def __init__(self, runtime, root: Path, search_seeds: list[int], final_seeds: list[int]):
+    def __init__(
+        self,
+        runtime,
+        root: Path,
+        search_seeds: list[int],
+        final_seeds: list[int],
+        *,
+        record_search_telemetry: bool = False,
+    ):
         self.runtime = runtime
         self.root = root
         self.search_seeds = search_seeds
         self.final_seeds = final_seeds
+        self.record_search_telemetry = record_search_telemetry
 
     def _checked_record(self, path: Path, schedule: list[float], seed: int) -> dict:
         record = json.loads(path.read_text())
@@ -260,7 +269,14 @@ class RolloutLedger:
                 else:
                     if self.search_rollouts_used() >= SEARCH_BUDGET:
                         raise RuntimeError("STRIDER search rollout budget exhausted")
-                    record = self.runtime.rollout(schedule, seed)
+                    if self.record_search_telemetry:
+                        record = self.runtime.rollout(
+                            schedule,
+                            seed,
+                            record_attribution_telemetry=True,
+                        )
+                    else:
+                        record = self.runtime.rollout(schedule, seed)
                     if list(map(float, record.get("schedule", ()))) != schedule:
                         raise RuntimeError("runtime returned a different schedule")
                     write_json(path, record)

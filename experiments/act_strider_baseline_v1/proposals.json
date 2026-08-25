@@ -1,0 +1,60 @@
+{
+  "schema": "strider-semantic-proposals-v1",
+  "created_before_lane_outcomes": true,
+  "source": "interactive_agent_task_semantics_and_predeclared_uniform_comparators",
+  "disclosure": "pick is a development task and prior pick schedule discussions were visible",
+  "tasks": {
+    "pick": {
+      "protected_phase": "grasp_lift",
+      "phase_risk": {
+        "pre_grasp": "cautious",
+        "grasp_lift": "protected",
+        "transport": "open",
+        "interaction": "open"
+      },
+      "rationale": "Protect grasp acquisition; progressively accelerate retained-grasp motion and placement.",
+      "candidate_schedules": [
+        [2.0, 2.0, 2.0, 2.0],
+        [2.5, 2.5, 2.5, 2.5],
+        [2.5, 1.5, 2.5, 2.5],
+        [2.5, 1.5, 3.5, 3.5],
+        [2.5, 1.5, 4.0, 4.0]
+      ]
+    },
+    "tea": {
+      "protected_phase": "grasp_lift",
+      "phase_risk": {
+        "pre_grasp": "cautious",
+        "grasp_lift": "protected",
+        "transport": "open",
+        "interaction": "cautious"
+      },
+      "rationale": "Protect tea-bag acquisition, accelerate free transport, and retain moderate terminal interaction speed.",
+      "candidate_schedules": [
+        [2.0, 2.0, 2.0, 2.0],
+        [2.5, 2.5, 2.5, 2.5],
+        [2.5, 1.5, 2.5, 2.5],
+        [2.5, 1.5, 3.5, 2.5],
+        [2.5, 1.5, 4.0, 2.5]
+      ]
+    },
+    "insertion": {
+      "protected_phase": "interaction",
+      "phase_risk": {
+        "pre_grasp": "cautious",
+        "grasp_lift": "protected",
+        "transport": "cautious",
+        "interaction": "protected"
+      },
+      "rationale": "Preserve precision during insertion while testing progressively faster approach and transport.",
+      "candidate_schedules": [
+        [2.0, 2.0, 2.0, 2.0],
+        [2.5, 2.5, 2.5, 2.5],
+        [2.0, 1.5, 2.0, 1.5],
+        [2.5, 1.5, 2.5, 1.5],
+        [2.5, 1.5, 3.5, 1.5]
+      ]
+    }
+  }
+}
+

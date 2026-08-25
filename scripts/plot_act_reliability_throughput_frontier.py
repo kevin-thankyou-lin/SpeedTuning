@@ -14,6 +14,7 @@ from matplotlib.lines import Line2D
 
 TASKS = ("Pick", "Tea", "Insertion")
 FIXED_UNIFORM_RE = re.compile(r"^Uniform (1\.5|2|2\.5|3)x$")
+SUCCESS_AXIS_KNOTS = ((0.0, 0.0), (25.0, 6.0), (90.0, 32.0), (100.0, 100.0))
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,26 @@ def pareto_frontier(values: list[Result]) -> list[Result]:
     )
 
 
+def success_axis_position(success_rate_percent: float) -> float:
+    """Map SR to a declared piecewise-linear display axis.
+
+    The low-reliability 0--25% interval is compressed, while 90--100% receives
+    most of the horizontal resolution. All original percentages remain shown
+    as tick labels and are used for Pareto calculations.
+    """
+
+    value = float(success_rate_percent)
+    if not 0.0 <= value <= 100.0:
+        raise ValueError("success rate must be between 0 and 100 percent")
+    for (source_left, display_left), (source_right, display_right) in zip(
+        SUCCESS_AXIS_KNOTS, SUCCESS_AXIS_KNOTS[1:], strict=True
+    ):
+        if value <= source_right:
+            fraction = (value - source_left) / (source_right - source_left)
+            return display_left + fraction * (display_right - display_left)
+    return SUCCESS_AXIS_KNOTS[-1][1]
+
+
 def method_style(method: str) -> dict:
     if method == "Native 1x":
         return {"color": "#4d4d4d", "marker": "X", "size": 44, "zorder": 4}
@@ -86,9 +107,12 @@ def method_style(method: str) -> dict:
         return {"color": "#f28e2b", "marker": "^", "size": 38, "zorder": 5}
     if method == "Rainbow RL":
         return {"color": "#e15759", "marker": "v", "size": 38, "zorder": 5}
-    if method in {"AWE offline proxy", "SAIL-inspired"}:
-        marker = "P" if method.startswith("AWE") else "h"
-        return {"color": "#b5b5b5", "marker": marker, "size": 34, "zorder": 3}
+    if method == "AWE offline proxy":
+        return {"color": "#b5b5b5", "marker": "P", "size": 34, "zorder": 3}
+    if method == "SAIL-inspired":
+        return {"color": "#008c95", "marker": "h", "size": 48, "zorder": 6}
+    if method in {"VOLT-style", "VOLT-style (learned phase)"}:
+        return {"color": "#d55e00", "marker": "d", "size": 44, "zorder": 6}
     if method == "STRIDER":
         return {"color": "#7b2cbf", "marker": "*", "size": 105, "zorder": 7}
     raise RuntimeError(f"no plot style registered for {method}")
@@ -108,11 +132,21 @@ def annotate(ax, value: Result) -> None:
             "Tea": (-39, -13),
             "Insertion": (4, -13),
         }[value.task]
+    elif value.method == "SAIL-inspired":
+        text = "SAIL-inspired*"
+        offset = {
+            "Pick": (-48, 5),
+            "Tea": (-62, 6),
+            "Insertion": (4, 5),
+        }[value.task]
+    elif value.method in {"VOLT-style", "VOLT-style (learned phase)"}:
+        text = "VOLT-style*"
+        offset = (4, 5)
     else:
         return
     ax.annotate(
         text,
-        (value.success_rate_percent, value.throughput_delta),
+        (success_axis_position(value.success_rate_percent), value.throughput_delta),
         xytext=offset,
         textcoords="offset points",
         fontsize=6.2,
@@ -133,14 +167,14 @@ def plot(results: list[Result], output_prefix: Path) -> None:
         "pdf.fonttype": 42,
         "ps.fonttype": 42,
     })
-    fig, axes = plt.subplots(1, 3, figsize=(7.15, 2.72), sharex=True, sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(7.15, 2.92), sharex=True, sharey=True)
 
     for ax, task in zip(axes, TASKS, strict=True):
         task_values = [value for value in results if value.task == task]
         fixed = [value for value in task_values if FIXED_UNIFORM_RE.fullmatch(value.method)]
         fixed.sort(key=lambda value: float(FIXED_UNIFORM_RE.fullmatch(value.method).group(1)))
         ax.plot(
-            [value.success_rate_percent for value in fixed],
+            [success_axis_position(value.success_rate_percent) for value in fixed],
             [value.throughput_delta for value in fixed],
             color="#a6a6a6",
             linewidth=1.0,
@@ -150,14 +184,14 @@ def plot(results: list[Result], output_prefix: Path) -> None:
 
         frontier = pareto_frontier(task_values)
         ax.plot(
-            [value.success_rate_percent for value in frontier],
+            [success_axis_position(value.success_rate_percent) for value in frontier],
             [value.throughput_delta for value in frontier],
             color="#1b7f5a",
             linewidth=1.35,
             zorder=3,
         )
         ax.scatter(
-            [value.success_rate_percent for value in frontier],
+            [success_axis_position(value.success_rate_percent) for value in frontier],
             [value.throughput_delta for value in frontier],
             facecolors="none",
             edgecolors="#1b7f5a",
@@ -169,7 +203,7 @@ def plot(results: list[Result], output_prefix: Path) -> None:
         for value in task_values:
             style = method_style(value.method)
             ax.scatter(
-                value.success_rate_percent,
+                success_axis_position(value.success_rate_percent),
                 value.throughput_delta,
                 c=style["color"],
                 marker=style["marker"],
@@ -180,12 +214,15 @@ def plot(results: list[Result], output_prefix: Path) -> None:
             )
             annotate(ax, value)
 
-        ax.axvline(90, color="#d0d0d0", linewidth=0.8, linestyle=":", zorder=0)
+        ax.axvline(success_axis_position(90), color="#b8b8b8", linewidth=0.9, linestyle=":", zorder=0)
+        ax.axvline(success_axis_position(25), color="#e3e3e3", linewidth=0.65, linestyle=":", zorder=0)
         ax.axhline(0, color="#c7c7c7", linewidth=0.8, zorder=0)
         ax.set_title(task, fontweight="semibold", pad=4)
-        ax.set_xlim(0, 103)
+        ax.set_xlim(-1, 103)
         ax.set_ylim(-80, 150)
-        ax.set_xticks((0, 25, 50, 75, 90, 100))
+        success_ticks = (0, 25, 50, 75, 90, 92, 94, 96, 98, 100)
+        ax.set_xticks([success_axis_position(value) for value in success_ticks])
+        ax.set_xticklabels([str(value) for value in success_ticks], rotation=35, ha="right")
         ax.set_yticks((-75, -50, 0, 50, 100, 150))
         ax.grid(True, color="#ededed", linewidth=0.55, zorder=-1)
         ax.spines[["top", "right"]].set_visible(False)
@@ -199,20 +236,31 @@ def plot(results: list[Result], output_prefix: Path) -> None:
         Line2D([], [], color="#59a14f", marker="s", linestyle="none", markersize=4, label="Learned subtask"),
         Line2D([], [], color="#f28e2b", marker="^", linestyle="none", markersize=4, label="Tabular RL"),
         Line2D([], [], color="#e15759", marker="v", linestyle="none", markersize=4, label="Rainbow RL"),
-        Line2D([], [], color="#b5b5b5", marker="P", linestyle="none", markersize=4, label="Internal proxies"),
+        Line2D([], [], color="#b5b5b5", marker="P", linestyle="none", markersize=4, label="AWE proxy"),
+        Line2D([], [], color="#008c95", marker="h", linestyle="none", markersize=5, label="SAIL-inspired*"),
+        Line2D([], [], color="#d55e00", marker="d", linestyle="none", markersize=4.5, label="VOLT-style*"),
         Line2D([], [], color="#7b2cbf", marker="*", linestyle="none", markersize=8, label="STRIDER"),
         Line2D([], [], color="#1b7f5a", linestyle="-", linewidth=1.4, label="Pareto frontier"),
     ]
     fig.legend(
         handles=legend,
         loc="lower center",
-        ncol=5,
+        ncol=6,
         frameon=False,
-        bbox_to_anchor=(0.5, -0.025),
+        bbox_to_anchor=(0.5, 0.005),
         columnspacing=1.25,
         handletextpad=0.45,
     )
-    fig.subplots_adjust(left=0.09, right=0.995, top=0.91, bottom=0.28, wspace=0.10)
+    fig.text(
+        0.995,
+        0.985,
+        "Piecewise-linear SR axis: 90–100% expanded; *frozen-policy proxy",
+        ha="right",
+        va="top",
+        fontsize=5.8,
+        color="#555555",
+    )
+    fig.subplots_adjust(left=0.09, right=0.995, top=0.88, bottom=0.31, wspace=0.10)
     output_prefix.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_prefix.with_suffix(".pdf"), bbox_inches="tight")
     fig.savefig(output_prefix.with_suffix(".png"), dpi=350, bbox_inches="tight")

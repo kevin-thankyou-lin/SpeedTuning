@@ -30,3 +30,18 @@ def test_pareto_frontier_drops_jointly_worse_method():
     frontier = module.pareto_frontier(values)
 
     assert [value.method for value in frontier] == ["d", "b", "a"]
+
+
+def test_success_axis_expands_high_reliability_and_compresses_low_reliability():
+    low_width = module.success_axis_position(25) - module.success_axis_position(0)
+    high_width = module.success_axis_position(100) - module.success_axis_position(90)
+
+    assert low_width == 6
+    assert high_width == 68
+    assert high_width > 10 * low_width
+    assert module.success_axis_position(95) == 66
+
+
+def test_sail_and_volt_have_explicit_plot_styles():
+    assert module.method_style("SAIL-inspired")["color"] != "#b5b5b5"
+    assert module.method_style("VOLT-style")["marker"] == "d"

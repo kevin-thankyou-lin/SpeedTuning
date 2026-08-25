@@ -10,6 +10,12 @@ from pathlib import Path
 
 
 TASKS = ("pick", "tea", "insertion")
+FIXED_UNIFORMS = (
+    ("uniform_1p5x", "Uniform 1.5x", [1.5, 1.5, 1.5, 1.5]),
+    ("uniform_2p0x", "Uniform 2x", [2.0, 2.0, 2.0, 2.0]),
+    ("uniform_2p5x", "Uniform 2.5x", [2.5, 2.5, 2.5, 2.5]),
+    ("uniform_3p0x", "Uniform 3x", [3.0, 3.0, 3.0, 3.0]),
+)
 METHODS = (
     ("uniform_sweep", "Uniform sweep", "base"),
     ("learned_phase_subtask", "Learned subtask", "repair"),
@@ -80,7 +86,7 @@ def strider_deployment(strider_result: dict, selection: dict, native: list[dict]
 
 def markdown(report: dict) -> str:
     lines = [
-        "# Preliminary frozen-ACT speed results with STRIDER",
+        "# Full frozen-ACT speed results with STRIDER",
         "",
         "All rows use the same 50 final seeds within each task. Throughput charges successful episodes through first success and failures through their terminal horizon.",
         "",
@@ -116,6 +122,8 @@ def main() -> int:
     parser.add_argument("--strider-pick-source", required=True)
     parser.add_argument("--strider-tea-source", required=True)
     parser.add_argument("--strider-insertion-source", required=True)
+    parser.add_argument("--fixed-uniform-root", type=Path, required=True)
+    parser.add_argument("--fixed-uniform-source", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -130,6 +138,7 @@ def main() -> int:
             "tea": args.strider_tea_source,
             "insertion": args.strider_insertion_source,
         },
+        "fixed_uniform_source": args.fixed_uniform_source,
     }
     for task in TASKS:
         seeds = base_manifest["tasks"][task]["final_bank"]["seeds"]
@@ -143,6 +152,26 @@ def main() -> int:
             "selected_schedule": [1.0, 1.0, 1.0, 1.0],
             **summarize(native, native),
         }]
+        fixed_task_root = (
+            args.fixed_uniform_root / "runs" / args.fixed_uniform_source / task
+        )
+        fixed_result = load(fixed_task_root / "RESULT.json")
+        if (
+            fixed_result.get("final_rollouts_per_speed") != 50
+            or fixed_result.get("new_candidate_rollouts") != 200
+            or fixed_result.get("native_rollouts_reexecuted") != 0
+        ):
+            raise RuntimeError(f"invalid fixed-uniform accounting: {task}")
+        for method, display, schedule in FIXED_UNIFORMS:
+            values = records(fixed_task_root / method, seeds)
+            if any(value.get("schedule") != schedule for value in values):
+                raise RuntimeError(f"fixed-uniform schedule mismatch: {task}/{method}")
+            methods.append({
+                "method": method,
+                "display_name": display,
+                "selected_schedule": schedule,
+                **summarize(values, native),
+            })
         for method, display, source_kind in METHODS:
             source = args.base_source if source_kind == "base" else args.repair_source
             root = args.benchmark_root / "runs" / source / task / method / "final"

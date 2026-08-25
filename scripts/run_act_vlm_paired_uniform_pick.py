@@ -147,10 +147,16 @@ def pareto_frontier(items: list[dict]) -> list[dict]:
 def compare(items: list[dict]) -> dict:
     eligible = [item for item in items if clean_qualified(item)]
     selected = None if not eligible else max(eligible, key=ranking_key)
-    uniforms = [item for item in eligible if len(set(item["schedule"])) == 1]
-    best_uniform = None if not uniforms else max(uniforms, key=ranking_key)
+    qualified_uniforms = [
+        item for item in eligible if len(set(item["schedule"])) == 1
+    ]
+    best_uniform = (
+        None
+        if not qualified_uniforms
+        else max(qualified_uniforms, key=ranking_key)
+    )
     balanced = next(item for item in items if item["schedule"] == list(BALANCED))
-    adaptive_strictly_beats_uniform = False
+    adaptive_strictly_beats_uniform = None
     if best_uniform is not None and clean_qualified(balanced):
         adaptive_strictly_beats_uniform = (
             balanced["successes"] >= best_uniform["successes"]
@@ -160,12 +166,16 @@ def compare(items: list[dict]) -> dict:
                 or balanced["matched_native_speedup"] > best_uniform["matched_native_speedup"]
             )
         )
+    adaptive_wins_registered_gate = clean_qualified(balanced) and not qualified_uniforms
+    if best_uniform is not None:
+        adaptive_wins_registered_gate = bool(adaptive_strictly_beats_uniform)
     return {
         "selection_rule": "clean qualified; exact successes, speedup, simplicity",
         "selected": selected,
         "best_uniform": best_uniform,
         "balanced_adaptive": balanced,
         "balanced_strictly_beats_best_uniform": adaptive_strictly_beats_uniform,
+        "balanced_wins_registered_gate_over_all_uniforms": adaptive_wins_registered_gate,
         "pareto_frontier": pareto_frontier(items),
     }
 
@@ -269,4 +279,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

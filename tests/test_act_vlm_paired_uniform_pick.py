@@ -44,5 +44,8 @@ def test_incomplete_schedule_is_not_eligible():
     uniform = item([2.0] * 4, 9, 1.8, "rejected_at_10")
     uniform["completed"] = 10
     items = [uniform, item([2.5] * 4, 17, 2.0, "rejected_at_20"), balanced, item(list(module.AGGRESSIVE), 17, 2.4, "rejected_at_20")]
-    assert module.compare(items)["selected"] == balanced
-
+    result = module.compare(items)
+    assert result["selected"] == balanced
+    assert result["best_uniform"] is None
+    assert result["balanced_strictly_beats_best_uniform"] is None
+    assert result["balanced_wins_registered_gate_over_all_uniforms"]

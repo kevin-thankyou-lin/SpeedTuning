@@ -59,6 +59,25 @@ def records(root: Path, seeds: list[int]) -> list[dict]:
     return values
 
 
+def strider_deployment(strider_result: dict, selection: dict, native: list[dict]) -> dict:
+    accelerated_qualified = bool(strider_result["accelerated_qualified_in_search"])
+    return {
+        **(
+            strider_result["final"]
+            if accelerated_qualified
+            else summarize(native, native)
+        ),
+        "selected_schedule": selection["deployment_schedule"],
+        "accelerated_qualified_in_search": accelerated_qualified,
+        "native_fallback": not accelerated_qualified,
+        "search_rollouts": strider_result["search"]["episodes_used"],
+        "exploratory_best_effort": {
+            "schedule": strider_result["selected_schedule"],
+            "final": strider_result["final"],
+        },
+    }
+
+
 def markdown(report: dict) -> str:
     lines = [
         "# Preliminary frozen-ACT speed results with STRIDER",
@@ -81,6 +100,7 @@ def markdown(report: dict) -> str:
     lines.extend([
         "",
         "`AWE offline proxy` and `SAIL-inspired` are the benchmark's preregistered internal proxies; they are not claimed as paper-faithful AWE or SAIL implementations.",
+        "If STRIDER's search gate rejects every accelerated schedule, its primary row reports the native deployment fallback; the evaluated best-effort accelerated candidate remains recorded in RESULTS.json.",
         "The Pick STRIDER proposal is a disclosed development-task result. Treat this table as preliminary until a newly preregistered paper benchmark is run.",
         "",
     ])
@@ -117,7 +137,12 @@ def main() -> int:
             raise RuntimeError(f"manifest final-bank mismatch: {task}")
         native_root = args.benchmark_root / "runs" / args.repair_source / task / "native_1x" / "final"
         native = records(native_root, seeds)
-        methods = []
+        methods = [{
+            "method": "native_1x",
+            "display_name": "Native 1x",
+            "selected_schedule": [1.0, 1.0, 1.0, 1.0],
+            **summarize(native, native),
+        }]
         for method, display, source_kind in METHODS:
             source = args.base_source if source_kind == "base" else args.repair_source
             root = args.benchmark_root / "runs" / source / task / method / "final"
@@ -125,14 +150,15 @@ def main() -> int:
             methods.append(value)
         strider_source = report["strider_sources"][task]
         strider_result = load(args.strider_root / "runs" / strider_source / task / "RESULT.json")
+        strider_selection = load(
+            args.strider_root / "runs" / strider_source / task / "search" / "public" / "SELECTION.json"
+        )
         if strider_result.get("final_rollouts") != 50 or strider_result.get("native_rollouts_reexecuted") != 0:
             raise RuntimeError(f"invalid STRIDER accounting: {task}")
         methods.append({
             "method": "strider",
             "display_name": "STRIDER",
-            **strider_result["final"],
-            "selected_schedule": strider_result["selected_schedule"],
-            "search_rollouts": strider_result["search"]["episodes_used"],
+            **strider_deployment(strider_result, strider_selection, native),
         })
         report["tasks"][task] = {"final_seeds": seeds, "methods": methods}
 

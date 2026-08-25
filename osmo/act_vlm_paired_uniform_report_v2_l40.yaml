@@ -32,10 +32,10 @@ workflow:
                 git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
                 test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
                 cd "$CODE"
+                mkdir -p "$OUTPUT"
                 python scripts/finalize_act_vlm_paired_uniform_report.py \
                   --source-result "$SOURCE_RESULT" --output-root "$RUN" \
                   --source-commit "$SOURCE_COMMIT" \
                   2>&1 | tee "$OUTPUT.log"
-                mkdir -p "$OUTPUT"
                 cp "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
                 echo ACT_VLM_PAIRED_UNIFORM_REPORT_V2_COMPLETE source=$SOURCE_COMMIT

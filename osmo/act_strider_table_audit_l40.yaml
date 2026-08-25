@@ -1,0 +1,47 @@
+version: 2
+default-values:
+  source_commit: REQUIRED_SOURCE_COMMIT
+  strider_source: REQUIRED_STRIDER_SOURCE
+workflow:
+  name: speedtuning-act-strider-table-audit-20260824-v1
+  timeout: {exec_timeout: 2h, queue_timeout: 12h}
+  resources:
+    default: {cpu: 2, gpu: 0, memory: 8Gi, platform: ovx-l40, storage: 8Gi}
+  groups:
+    - name: audit-group
+      tasks:
+        - name: audit
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            SOURCE_COMMIT: "{{ source_commit }}"
+            STRIDER_SOURCE: "{{ strider_source }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
+                STRIDER=/mnt/amlfs-04/home/linke/speedtuning-act-strider-baseline-v1
+                REPORT=/mnt/amlfs-04/home/linke/speedtuning-act-strider-baseline-v1/reports/$SOURCE_COMMIT
+                CODE=/osmo/run/workspace/SpeedTuning-act-strider-audit
+                OUTPUT=/osmo/run/outputs
+                test "$SOURCE_COMMIT" != REQUIRED_SOURCE_COMMIT
+                test "$STRIDER_SOURCE" != REQUIRED_STRIDER_SOURCE
+                test ! -e "$REPORT"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                python -m py_compile scripts/aggregate_act_strider_table.py
+                python scripts/aggregate_act_strider_table.py \
+                  --benchmark-root "$BENCHMARK" \
+                  --base-source 298c6d16784f228df0b1f455d0e41b4276ec5184 \
+                  --repair-source 866c9f436caf0a73e5e08ef83be38cbe89a23a61 \
+                  --strider-root "$STRIDER" --strider-source "$STRIDER_SOURCE" \
+                  --output "$REPORT"
+                mkdir -p "$OUTPUT"
+                cp "$REPORT/RESULTS.json" "$REPORT/RESULTS.md" "$OUTPUT/"
+                sha256sum "$REPORT/RESULTS.json" "$REPORT/RESULTS.md"

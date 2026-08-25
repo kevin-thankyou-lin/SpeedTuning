@@ -14,7 +14,7 @@ from matplotlib.lines import Line2D
 
 TASKS = ("Pick", "Tea", "Insertion")
 FIXED_UNIFORM_RE = re.compile(r"^Uniform (1\.5|2|2\.5|3)x$")
-SUCCESS_AXIS_KNOTS = ((0.0, 0.0), (25.0, 6.0), (90.0, 32.0), (100.0, 100.0))
+SUCCESS_AXIS_KNOTS = ((0.0, 0.0), (80.0, 15.0), (90.0, 45.0), (100.0, 100.0))
 EARLIER_BANK_METHODS = {
     "Uniform sweep",
     "Learned subtask",
@@ -85,9 +85,9 @@ def pareto_frontier(values: list[Result]) -> list[Result]:
 def success_axis_position(success_rate_percent: float) -> float:
     """Map SR to a declared piecewise-linear display axis.
 
-    The low-reliability 0--25% interval is compressed, while 90--100% receives
-    most of the horizontal resolution. All original percentages remain shown
-    as tick labels and are used for Pareto calculations.
+    The 0--80% interval is compressed into 15% of the display width, while
+    80--100% receives the remaining 85%. Original percentages—not transformed
+    positions—are used for Pareto calculations and displayed as tick labels.
     """
 
     value = float(success_rate_percent)
@@ -236,13 +236,13 @@ def plot(results: list[Result], output_prefix: Path) -> None:
             )
             annotate(ax, value)
 
+        ax.axvline(success_axis_position(80), color="#d4d4d4", linewidth=0.75, linestyle=":", zorder=0)
         ax.axvline(success_axis_position(90), color="#b8b8b8", linewidth=0.9, linestyle=":", zorder=0)
-        ax.axvline(success_axis_position(25), color="#e3e3e3", linewidth=0.65, linestyle=":", zorder=0)
         ax.axhline(0, color="#c7c7c7", linewidth=0.8, zorder=0)
         ax.set_title(task, fontweight="semibold", pad=4)
         ax.set_xlim(-1, 103)
         ax.set_ylim(-80, 150)
-        success_ticks = (0, 25, 50, 75, 90, 92, 94, 96, 98, 100)
+        success_ticks = (0, 40, 80, 85, 90, 92, 94, 96, 98, 100)
         ax.set_xticks([success_axis_position(value) for value in success_ticks])
         ax.set_xticklabels([str(value) for value in success_ticks], rotation=35, ha="right")
         ax.set_yticks((-75, -50, 0, 50, 100, 150))
@@ -276,7 +276,7 @@ def plot(results: list[Result], output_prefix: Path) -> None:
     fig.text(
         0.995,
         0.985,
-        "90–100% SR expanded; hollow = earlier sealed bank; *frozen-policy proxy",
+        "Nonlinear x-axis: 80–100% SR expanded; hollow = earlier sealed bank; *frozen-policy proxy",
         ha="right",
         va="top",
         fontsize=5.8,

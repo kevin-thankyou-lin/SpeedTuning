@@ -6,9 +6,10 @@ success and failed episodes through their terminal horizon. Filled points use
 the fresh paired STRIDER/VOLT bank; hollow points use the earlier sealed
 baseline bank. Green curves join only the non-dominated fresh paired-bank
 methods, and gray dashed curves connect its fixed-uniform schedules. The
-success-rate axis is piecewise linear: 0--25% is compressed and 90--100% is
-expanded so reliability losses near 100% remain visually prominent. The
-vertical dotted line marks 90% success. SAIL-inspired points are explicitly
+success-rate axis is piecewise linear: 0--80% occupies 15% of the horizontal
+width and 80--100% occupies the remaining 85%, so reliability losses near 100%
+remain visually prominent. Vertical dotted lines mark 80% and 90% success.
+SAIL-inspired points are explicitly
 colored and annotated; the asterisk identifies frozen-policy proxies rather
 than paper-faithful retraining.
 
@@ -25,9 +26,9 @@ Paper-ready LaTeX:
   hollow points use an earlier sealed bank and provide distribution-level
   context rather than same-seed comparisons. Green curves connect
   non-dominated methods on the fresh paired bank; dashed gray curves connect
-  its fixed-uniform speeds. The piecewise-linear success-rate axis expands
-  90--100\% and compresses 0--25\% to emphasize small losses near native
-  reliability. Asterisks denote frozen-policy proxies rather than
+  its fixed-uniform speeds. The explicitly nonlinear success-rate axis assigns
+  85\% of its width to 80--100\% SR and compresses 0--80\% into the remaining
+  15\%, emphasizing small losses near native reliability. Asterisks denote frozen-policy proxies rather than
   paper-faithful retraining.}
   \label{fig:reliability-throughput-frontier}
 \end{figure*}

@@ -33,13 +33,14 @@ def test_pareto_frontier_drops_jointly_worse_method():
 
 
 def test_success_axis_expands_high_reliability_and_compresses_low_reliability():
-    low_width = module.success_axis_position(25) - module.success_axis_position(0)
-    high_width = module.success_axis_position(100) - module.success_axis_position(90)
+    low_width = module.success_axis_position(80) - module.success_axis_position(0)
+    high_width = module.success_axis_position(100) - module.success_axis_position(80)
 
-    assert low_width == 6
-    assert high_width == 68
-    assert high_width > 10 * low_width
-    assert module.success_axis_position(95) == 66
+    assert low_width == 15
+    assert high_width == 85
+    assert high_width > 5 * low_width
+    assert module.success_axis_position(85) == 30
+    assert module.success_axis_position(95) == 72.5
 
 
 def test_sail_and_volt_have_explicit_plot_styles():

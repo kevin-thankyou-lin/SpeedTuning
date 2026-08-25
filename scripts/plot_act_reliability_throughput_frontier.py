@@ -15,6 +15,14 @@ from matplotlib.lines import Line2D
 TASKS = ("Pick", "Tea", "Insertion")
 FIXED_UNIFORM_RE = re.compile(r"^Uniform (1\.5|2|2\.5|3)x$")
 SUCCESS_AXIS_KNOTS = ((0.0, 0.0), (25.0, 6.0), (90.0, 32.0), (100.0, 100.0))
+EARLIER_BANK_METHODS = {
+    "Uniform sweep",
+    "Learned subtask",
+    "Tabular RL",
+    "Rainbow RL",
+    "AWE offline proxy",
+    "SAIL-inspired",
+}
 
 
 @dataclass(frozen=True)
@@ -120,28 +128,36 @@ def method_style(method: str) -> dict:
 
 def annotate(ax, value: Result) -> None:
     if FIXED_UNIFORM_RE.fullmatch(value.method):
+        if (value.task, value.method) == ("Tea", "Uniform 1.5x"):
+            return
         text = value.method.removeprefix("Uniform ").replace("x", "×")
         offset = {
             ("Pick", "Uniform 2x"): (4, -11),
             ("Tea", "Uniform 1.5x"): (-20, -13),
         }.get((value.task, value.method), (4, 4))
     elif value.method == "STRIDER":
-        text = "STRIDER"
+        text = {
+            "Pick": "STRIDER",
+            "Tea": "STRIDER = 1.5×",
+            "Insertion": "STRIDER = VOLT = 1×",
+        }[value.task]
         offset = {
             "Pick": (-45, -13),
-            "Tea": (-39, -13),
-            "Insertion": (4, -13),
+            "Tea": (-55, -20),
+            "Insertion": (-72, -22),
         }[value.task]
     elif value.method == "SAIL-inspired":
         text = "SAIL-inspired*"
         offset = {
             "Pick": (-48, 5),
             "Tea": (-62, 6),
-            "Insertion": (4, 5),
+            "Insertion": (-67, 7),
         }[value.task]
     elif value.method in {"VOLT-style", "VOLT-style (learned phase)"}:
-        text = "VOLT-style*"
-        offset = (4, 5)
+        if value.task == "Insertion":
+            return
+        text = "VOLT-style*" if value.task == "Pick" else "VOLT = 1×"
+        offset = (4, 5) if value.task == "Pick" else (-43, 8)
     else:
         return
     ax.annotate(
@@ -182,7 +198,10 @@ def plot(results: list[Result], output_prefix: Path) -> None:
             zorder=2,
         )
 
-        frontier = pareto_frontier(task_values)
+        paired_values = [
+            value for value in task_values if value.method not in EARLIER_BANK_METHODS
+        ]
+        frontier = pareto_frontier(paired_values)
         ax.plot(
             [success_axis_position(value.success_rate_percent) for value in frontier],
             [value.throughput_delta for value in frontier],
@@ -202,14 +221,17 @@ def plot(results: list[Result], output_prefix: Path) -> None:
 
         for value in task_values:
             style = method_style(value.method)
+            earlier_bank = value.method in EARLIER_BANK_METHODS
             ax.scatter(
                 success_axis_position(value.success_rate_percent),
                 value.throughput_delta,
-                c=style["color"],
+                facecolors="none" if earlier_bank else style["color"],
+                edgecolors=style["color"] if earlier_bank else (
+                    "white" if value.method != "Native 1x" else "none"
+                ),
                 marker=style["marker"],
                 s=style["size"],
-                edgecolors="white" if value.method != "Native 1x" else "none",
-                linewidths=0.45,
+                linewidths=1.0 if earlier_bank else 0.45,
                 zorder=style["zorder"],
             )
             annotate(ax, value)
@@ -232,15 +254,15 @@ def plot(results: list[Result], output_prefix: Path) -> None:
     legend = [
         Line2D([], [], color="#4d4d4d", marker="X", linestyle="none", markersize=5, label="Native 1×"),
         Line2D([], [], color="#8c8c8c", marker="o", linestyle="--", markersize=4, label="Fixed uniform"),
-        Line2D([], [], color="#4c78a8", marker="D", linestyle="none", markersize=4, label="Uniform sweep"),
-        Line2D([], [], color="#59a14f", marker="s", linestyle="none", markersize=4, label="Learned subtask"),
-        Line2D([], [], color="#f28e2b", marker="^", linestyle="none", markersize=4, label="Tabular RL"),
-        Line2D([], [], color="#e15759", marker="v", linestyle="none", markersize=4, label="Rainbow RL"),
-        Line2D([], [], color="#b5b5b5", marker="P", linestyle="none", markersize=4, label="AWE proxy"),
-        Line2D([], [], color="#008c95", marker="h", linestyle="none", markersize=5, label="SAIL-inspired*"),
+        Line2D([], [], color="#4c78a8", marker="D", markerfacecolor="none", linestyle="none", markersize=4, label="Uniform sweep"),
+        Line2D([], [], color="#59a14f", marker="s", markerfacecolor="none", linestyle="none", markersize=4, label="Learned subtask"),
+        Line2D([], [], color="#f28e2b", marker="^", markerfacecolor="none", linestyle="none", markersize=4, label="Tabular RL"),
+        Line2D([], [], color="#e15759", marker="v", markerfacecolor="none", linestyle="none", markersize=4, label="Rainbow RL"),
+        Line2D([], [], color="#b5b5b5", marker="P", markerfacecolor="none", linestyle="none", markersize=4, label="AWE proxy"),
+        Line2D([], [], color="#008c95", marker="h", markerfacecolor="none", linestyle="none", markersize=5, label="SAIL-inspired*"),
         Line2D([], [], color="#d55e00", marker="d", linestyle="none", markersize=4.5, label="VOLT-style*"),
         Line2D([], [], color="#7b2cbf", marker="*", linestyle="none", markersize=8, label="STRIDER"),
-        Line2D([], [], color="#1b7f5a", linestyle="-", linewidth=1.4, label="Pareto frontier"),
+        Line2D([], [], color="#1b7f5a", linestyle="-", linewidth=1.4, label="Paired-bank frontier"),
     ]
     fig.legend(
         handles=legend,
@@ -254,7 +276,7 @@ def plot(results: list[Result], output_prefix: Path) -> None:
     fig.text(
         0.995,
         0.985,
-        "Piecewise-linear SR axis: 90–100% expanded; *frozen-policy proxy",
+        "90–100% SR expanded; hollow = earlier sealed bank; *frozen-policy proxy",
         ha="right",
         va="top",
         fontsize=5.8,

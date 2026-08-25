@@ -46,3 +46,8 @@ def test_success_axis_expands_high_reliability_and_compresses_low_reliability():
 def test_sail_and_volt_have_explicit_plot_styles():
     assert module.method_style("SAIL-inspired")["color"] != "#b5b5b5"
     assert module.method_style("VOLT-style")["marker"] == "d"
+
+
+def test_uniform_family_includes_3p5_and_excludes_legacy_alias():
+    assert module.FIXED_UNIFORM_RE.fullmatch("Uniform 3.5x")
+    assert "Uniform sweep" in module.LEGACY_UNIFORM_ALIASES

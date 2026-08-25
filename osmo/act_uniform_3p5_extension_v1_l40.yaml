@@ -1,0 +1,69 @@
+version: 2
+default-values:
+  source_commit: REQUIRED_SOURCE_COMMIT
+  task_label: REQUIRED_TASK_LABEL
+  final_base: REQUIRED_FINAL_BASE
+workflow:
+  name: speedtuning-act-uniform-3p5-{{ task_label }}-20260825-v1
+  timeout: {exec_timeout: 12h, queue_timeout: 12h}
+  resources:
+    default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 48Gi}
+  groups:
+    - name: uniform-3p5-group
+      tasks:
+        - name: final
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            SOURCE_COMMIT: "{{ source_commit }}"
+            TASK_LABEL: "{{ task_label }}"
+            FINAL_BASE: "{{ final_base }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
+                BASE_SOURCE=866c9f436caf0a73e5e08ef83be38cbe89a23a61
+                MANIFEST=$BENCHMARK/attempts/$BASE_SOURCE/run_manifest.json
+                DETECTOR=$BENCHMARK/frozen_detector
+                RUN=/mnt/amlfs-04/home/linke/speedtuning-act-uniform-3p5-v1/runs/$SOURCE_COMMIT/$TASK_LABEL
+                CODE=/osmo/run/workspace/SpeedTuning-act-uniform-3p5-v1-$TASK_LABEL
+                OUTPUT=/osmo/run/outputs/$TASK_LABEL
+                export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 SPEEDTUNING_TORCH_THREADS=2 TOKENIZERS_PARALLELISM=false
+                test "$SOURCE_COMMIT" != REQUIRED_SOURCE_COMMIT
+                test "$TASK_LABEL" != REQUIRED_TASK_LABEL
+                test "$FINAL_BASE" != REQUIRED_FINAL_BASE
+                test -f "$MANIFEST"
+                test -f "$DETECTOR/rgb_proprio_phase_rn18.pt"
+                test ! -e "$RUN"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                .venv/bin/python -m pytest -q \
+                  tests/test_run_act_uniform_3p5_extension_v1.py \
+                  tests/test_run_act_strider_frontier_v2.py \
+                  tests/test_act_vlm_frontier_server.py \
+                  tests/test_one_reset_phase_schedule.py \
+                  tests/test_original_act_speed_adapter.py
+                mkdir -p "$RUN" "$OUTPUT"
+                FINAL_SEEDS=$(seq -s, "$FINAL_BASE" $((FINAL_BASE + 49)))
+                .venv/bin/python scripts/run_act_uniform_3p5_extension_v1.py \
+                  --root "$RUN" --source-commit "$SOURCE_COMMIT" \
+                  --run-manifest "$MANIFEST" --task-label "$TASK_LABEL" \
+                  --contract experiments/act_uniform_3p5_extension_v1/CONTRACT.md \
+                  --banks experiments/act_strider_frontier_v4/BANKS.json \
+                  --final-seeds "$FINAL_SEEDS" \
+                  --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                  --detector-source "$DETECTOR/source" --device cuda \
+                  2>&1 | tee "$OUTPUT/run.log"
+                cp "$RUN/IDENTITY.json" "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
+                sha256sum "$RUN/IDENTITY.json" "$RUN/RESULT.json" "$RUN/COMPLETE.json"
+                echo UNIFORM_3P5_EXTENSION_COMPLETE task=$TASK_LABEL source=$SOURCE_COMMIT

@@ -4,7 +4,7 @@ Successful episodes are charged through first success; failures are charged
 through their terminal horizon. Thus, throughput includes the cost of failures
 rather than reporting speed only on successful episodes.
 
-The filled native/fixed-uniform/STRIDER/VOLT-style rows use one fresh paired
+The filled native/uniform/STRIDER/VOLT-style rows use one fresh paired
 50-seed bank per task. The remaining hollow-marker baselines use the earlier
 sealed 50-seed bank. Every throughput delta uses the matching native control
 from its own bank. Comparisons within either bank are paired; cross-bank points
@@ -17,7 +17,6 @@ provide task-distribution context and are not same-seed head-to-head tests.
 | Pick | Uniform 2x | 47/50 | 0.94 | 1.857x | +70.7% | 0 | 0 |
 | Pick | Uniform 2.5x | 46/50 | 0.92 | 2.256x | +102.1% | 0 | 0 |
 | Pick | Uniform 3x | 45/50 | 0.90 | 2.679x | +133.4% | 0 | 0 |
-| Pick | Uniform sweep | 50/50 | 1.00 | 1.858x | +85.8% | 0 | 0 |
 | Pick | Learned subtask | 50/50 | 1.00 | 1.341x | +34.1% | 0 | 0 |
 | Pick | Tabular RL | 50/50 | 1.00 | 1.522x | +52.2% | 0 | 0 |
 | Pick | Rainbow RL | 50/50 | 1.00 | 1.792x | +79.2% | 0 | 0 |
@@ -30,7 +29,6 @@ provide task-distribution context and are not same-seed head-to-head tests.
 | Tea | Uniform 2x | 38/50 | 0.76 | 1.875x | +40.6% | 0 | 0 |
 | Tea | Uniform 2.5x | 22/50 | 0.44 | 2.304x | -0.8% | 0 | 0 |
 | Tea | Uniform 3x | 6/50 | 0.12 | 2.703x | -68.0% | 0 | 0 |
-| Tea | Uniform sweep | 44/50 | 0.88 | 1.448x | +26.0% | 0 | 0 |
 | Tea | Learned subtask | 49/50 | 0.98 | 1.530x | +49.6% | 0 | 0 |
 | Tea | Tabular RL | 49/50 | 0.98 | 1.449x | +41.7% | 0 | 0 |
 | Tea | Rainbow RL | 46/50 | 0.92 | 1.532x | +40.3% | 0 | 0 |
@@ -43,7 +41,6 @@ provide task-distribution context and are not same-seed head-to-head tests.
 | Insertion | Uniform 2x | 42/50 | 0.84 | 1.868x | +55.5% | 0 | 0 |
 | Insertion | Uniform 2.5x | 39/50 | 0.78 | 2.278x | +76.6% | 0 | 0 |
 | Insertion | Uniform 3x | 26/50 | 0.52 | 2.683x | +38.5% | 0 | 0 |
-| Insertion | Uniform sweep | 39/50 | 0.78 | 1.871x | +47.6% | 0 | 0 |
 | Insertion | Learned subtask | 48/50 | 0.96 | 1.426x | +39.4% | 0 | 0 |
 | Insertion | Tabular RL | 46/50 | 0.92 | 1.141x | +6.8% | 0 | 0 |
 | Insertion | Rainbow RL | 44/50 | 0.88 | 1.596x | +41.6% | 0 | 0 |
@@ -70,7 +67,9 @@ The paper-ready frontier figure is available as
 and
 [`figures/reliability_throughput_frontier.png`](figures/reliability_throughput_frontier.png).
 Green curves mark empirical non-dominated methods within each task; dashed gray
-curves connect the paired fixed-uniform schedules. Hollow points come from the
+curves connect the paired uniform schedules, including native `1x`. The older
+`Uniform sweep` rows are intentionally omitted because they are outcomes of
+this same controller family on a different bank, not a distinct method. Hollow points come from the
 earlier sealed baseline bank and filled points from the fresh STRIDER/VOLT bank.
 
 ## Audit receipt

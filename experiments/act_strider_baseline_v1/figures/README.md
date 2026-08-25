@@ -5,7 +5,10 @@ The figure plots achieved task throughput against success rate on each frozen
 success and failed episodes through their terminal horizon. Filled points use
 the fresh paired STRIDER/VOLT bank; hollow points use the earlier sealed
 baseline bank. Green curves join only the non-dominated fresh paired-bank
-methods, and gray dashed curves connect its fixed-uniform schedules. The
+methods, and gray dashed curves connect its uniform schedules from native
+`1x` through `3.5x`. Older-bank `Uniform sweep` outcomes are not drawn as a
+separate method because they instantiate the same fixed-uniform controller
+family. The
 success-rate axis is piecewise linear: 0--80% occupies 15% of the horizontal
 width and 80--100% occupies the remaining 85%, so reliability losses near 100%
 remain visually prominent. Vertical dotted lines mark 80% and 90% success.
@@ -26,7 +29,9 @@ Paper-ready LaTeX:
   hollow points use an earlier sealed bank and provide distribution-level
   context rather than same-seed comparisons. Green curves connect
   non-dominated methods on the fresh paired bank; dashed gray curves connect
-  its fixed-uniform speeds. The explicitly nonlinear success-rate axis assigns
+  its uniform speeds from native $1\times$ through $3.5\times$. Older-bank
+  uniform-sweep outcomes are omitted rather than presented as a distinct
+  algorithm. The explicitly nonlinear success-rate axis assigns
   85\% of its width to 80--100\% SR and compresses 0--80\% into the remaining
   15\%, emphasizing small losses near native reliability. Asterisks denote frozen-policy proxies rather than
   paper-faithful retraining.}

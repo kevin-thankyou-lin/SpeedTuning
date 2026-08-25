@@ -13,10 +13,10 @@ from matplotlib.lines import Line2D
 
 
 TASKS = ("Pick", "Tea", "Insertion")
-FIXED_UNIFORM_RE = re.compile(r"^Uniform (1\.5|2|2\.5|3)x$")
+FIXED_UNIFORM_RE = re.compile(r"^Uniform (1\.5|2|2\.5|3|3\.5)x$")
+LEGACY_UNIFORM_ALIASES = {"Uniform sweep"}
 SUCCESS_AXIS_KNOTS = ((0.0, 0.0), (80.0, 15.0), (90.0, 45.0), (100.0, 100.0))
 EARLIER_BANK_METHODS = {
-    "Uniform sweep",
     "Learned subtask",
     "Tabular RL",
     "Rainbow RL",
@@ -107,8 +107,6 @@ def method_style(method: str) -> dict:
         return {"color": "#4d4d4d", "marker": "X", "size": 44, "zorder": 4}
     if FIXED_UNIFORM_RE.fullmatch(method):
         return {"color": "#8c8c8c", "marker": "o", "size": 30, "zorder": 4}
-    if method == "Uniform sweep":
-        return {"color": "#4c78a8", "marker": "D", "size": 34, "zorder": 5}
     if method == "Learned subtask":
         return {"color": "#59a14f", "marker": "s", "size": 34, "zorder": 5}
     if method == "Tabular RL":
@@ -186,9 +184,21 @@ def plot(results: list[Result], output_prefix: Path) -> None:
     fig, axes = plt.subplots(1, 3, figsize=(7.15, 2.92), sharex=True, sharey=True)
 
     for ax, task in zip(axes, TASKS, strict=True):
-        task_values = [value for value in results if value.task == task]
-        fixed = [value for value in task_values if FIXED_UNIFORM_RE.fullmatch(value.method)]
-        fixed.sort(key=lambda value: float(FIXED_UNIFORM_RE.fullmatch(value.method).group(1)))
+        task_values = [
+            value
+            for value in results
+            if value.task == task and value.method not in LEGACY_UNIFORM_ALIASES
+        ]
+        fixed = [
+            value
+            for value in task_values
+            if value.method == "Native 1x" or FIXED_UNIFORM_RE.fullmatch(value.method)
+        ]
+        fixed.sort(
+            key=lambda value: 1.0
+            if value.method == "Native 1x"
+            else float(FIXED_UNIFORM_RE.fullmatch(value.method).group(1))
+        )
         ax.plot(
             [success_axis_position(value.success_rate_percent) for value in fixed],
             [value.throughput_delta for value in fixed],
@@ -253,8 +263,7 @@ def plot(results: list[Result], output_prefix: Path) -> None:
     axes[0].set_ylabel("Effective throughput change\nvs. native 1× (%)")
     legend = [
         Line2D([], [], color="#4d4d4d", marker="X", linestyle="none", markersize=5, label="Native 1×"),
-        Line2D([], [], color="#8c8c8c", marker="o", linestyle="--", markersize=4, label="Fixed uniform"),
-        Line2D([], [], color="#4c78a8", marker="D", markerfacecolor="none", linestyle="none", markersize=4, label="Uniform sweep"),
+        Line2D([], [], color="#8c8c8c", marker="o", linestyle="--", markersize=4, label="Uniform 1–3.5×"),
         Line2D([], [], color="#59a14f", marker="s", markerfacecolor="none", linestyle="none", markersize=4, label="Learned subtask"),
         Line2D([], [], color="#f28e2b", marker="^", markerfacecolor="none", linestyle="none", markersize=4, label="Tabular RL"),
         Line2D([], [], color="#e15759", marker="v", markerfacecolor="none", linestyle="none", markersize=4, label="Rainbow RL"),

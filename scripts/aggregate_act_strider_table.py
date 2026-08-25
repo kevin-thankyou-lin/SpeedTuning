@@ -93,7 +93,9 @@ def main() -> int:
     parser.add_argument("--base-source", required=True)
     parser.add_argument("--repair-source", required=True)
     parser.add_argument("--strider-root", type=Path, required=True)
-    parser.add_argument("--strider-source", required=True)
+    parser.add_argument("--strider-pick-source", required=True)
+    parser.add_argument("--strider-tea-source", required=True)
+    parser.add_argument("--strider-insertion-source", required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -103,7 +105,11 @@ def main() -> int:
         "schema": "act-strider-preliminary-table-v1",
         "tasks": {},
         "baseline_sources": {"base": args.base_source, "repair": args.repair_source},
-        "strider_source": args.strider_source,
+        "strider_sources": {
+            "pick": args.strider_pick_source,
+            "tea": args.strider_tea_source,
+            "insertion": args.strider_insertion_source,
+        },
     }
     for task in TASKS:
         seeds = base_manifest["tasks"][task]["final_bank"]["seeds"]
@@ -117,7 +123,8 @@ def main() -> int:
             root = args.benchmark_root / "runs" / source / task / method / "final"
             value = {"method": method, "display_name": display, **summarize(records(root, seeds), native)}
             methods.append(value)
-        strider_result = load(args.strider_root / "runs" / args.strider_source / task / "RESULT.json")
+        strider_source = report["strider_sources"][task]
+        strider_result = load(args.strider_root / "runs" / strider_source / task / "RESULT.json")
         if strider_result.get("final_rollouts") != 50 or strider_result.get("native_rollouts_reexecuted") != 0:
             raise RuntimeError(f"invalid STRIDER accounting: {task}")
         methods.append({
@@ -138,4 +145,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -1,7 +1,9 @@
 version: 2
 default-values:
   source_commit: REQUIRED_SOURCE_COMMIT
-  strider_source: REQUIRED_STRIDER_SOURCE
+  strider_pick_source: REQUIRED_STRIDER_PICK_SOURCE
+  strider_tea_source: REQUIRED_STRIDER_TEA_SOURCE
+  strider_insertion_source: REQUIRED_STRIDER_INSERTION_SOURCE
 workflow:
   name: speedtuning-act-strider-table-audit-20260824-v1
   timeout: {exec_timeout: 2h, queue_timeout: 12h}
@@ -17,7 +19,9 @@ workflow:
           args: [/tmp/run.sh]
           environment:
             SOURCE_COMMIT: "{{ source_commit }}"
-            STRIDER_SOURCE: "{{ strider_source }}"
+            STRIDER_PICK_SOURCE: "{{ strider_pick_source }}"
+            STRIDER_TEA_SOURCE: "{{ strider_tea_source }}"
+            STRIDER_INSERTION_SOURCE: "{{ strider_insertion_source }}"
           files:
             - path: /tmp/run.sh
               contents: |-
@@ -29,7 +33,9 @@ workflow:
                 CODE=/osmo/run/workspace/SpeedTuning-act-strider-audit
                 OUTPUT=/osmo/run/outputs
                 test "$SOURCE_COMMIT" != REQUIRED_SOURCE_COMMIT
-                test "$STRIDER_SOURCE" != REQUIRED_STRIDER_SOURCE
+                test "$STRIDER_PICK_SOURCE" != REQUIRED_STRIDER_PICK_SOURCE
+                test "$STRIDER_TEA_SOURCE" != REQUIRED_STRIDER_TEA_SOURCE
+                test "$STRIDER_INSERTION_SOURCE" != REQUIRED_STRIDER_INSERTION_SOURCE
                 test ! -e "$REPORT"
                 git clone "$SOURCE_URL" "$CODE"
                 git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
@@ -40,7 +46,10 @@ workflow:
                   --benchmark-root "$BENCHMARK" \
                   --base-source 298c6d16784f228df0b1f455d0e41b4276ec5184 \
                   --repair-source 866c9f436caf0a73e5e08ef83be38cbe89a23a61 \
-                  --strider-root "$STRIDER" --strider-source "$STRIDER_SOURCE" \
+                  --strider-root "$STRIDER" \
+                  --strider-pick-source "$STRIDER_PICK_SOURCE" \
+                  --strider-tea-source "$STRIDER_TEA_SOURCE" \
+                  --strider-insertion-source "$STRIDER_INSERTION_SOURCE" \
                   --output "$REPORT"
                 mkdir -p "$OUTPUT"
                 cp "$REPORT/RESULTS.json" "$REPORT/RESULTS.md" "$OUTPUT/"

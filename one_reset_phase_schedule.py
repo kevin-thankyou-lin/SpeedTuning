@@ -15,6 +15,10 @@ from speed_policy import SpeedContext
 
 ALLOWED_SPEEDS = (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
 TASK_OBJECTS = {"pick_and_place": 1, "tea_bag": 1, "insertion": 2}
+# Explicit reset-state sizes accepted by the three simulator tasks. Tea must
+# preserve the complete post-robot qpos suffix (39 values), not only the first
+# free-joint pose, because TransferTeaBagTask restores that suffix atomically.
+TASK_RESET_POSE_VALUES = {"pick_and_place": 7, "tea_bag": 39, "insertion": 14}
 
 
 def validate_schedule(values) -> tuple[float, ...]:
@@ -142,9 +146,7 @@ def sample_object_pose(task: str, seed: int) -> tuple[float, ...]:
     )
     try:
         env.reset()
-        # Some scenes include additional free-joint props after the task
-        # object. Only the controlled task objects belong in the frozen pose.
-        pose_values = TASK_OBJECTS[task] * 7
+        pose_values = TASK_RESET_POSE_VALUES[task]
         return tuple(
             float(value)
             for value in env.cur_ts.observation["env_state"][:pose_values]

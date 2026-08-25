@@ -31,7 +31,7 @@ def test_fixed_pose_reproduces_the_same_learning_scene():
 
 def test_sampled_pose_contains_only_task_objects():
     assert len(sample_object_pose("pick_and_place", 90317)) == 7
-    assert len(sample_object_pose("tea_bag", 90317)) == 7
+    assert len(sample_object_pose("tea_bag", 90317)) == 39
     assert len(sample_object_pose("insertion", 90317)) == 14
 
 

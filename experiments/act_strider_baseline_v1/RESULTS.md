@@ -54,6 +54,15 @@ paper-faithful implementations of AWE or SAIL. Pick is a disclosed development
 task whose proposals were informed by prior discussion. These numbers are
 therefore preliminary rather than the final paper benchmark.
 
+## Reliability-throughput frontier
+
+The paper-ready frontier figure is available as
+[`figures/reliability_throughput_frontier.pdf`](figures/reliability_throughput_frontier.pdf)
+and
+[`figures/reliability_throughput_frontier.png`](figures/reliability_throughput_frontier.png).
+Green curves mark empirical non-dominated methods within each task; dashed gray
+curves connect the independently evaluated fixed-uniform schedules.
+
 ## Audit receipt
 
 - Audit workflow: `speedtuning-act-strider-table-audit-20260825-v3-1`

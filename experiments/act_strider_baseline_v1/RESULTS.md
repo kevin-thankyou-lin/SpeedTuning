@@ -1,4 +1,4 @@
-# Preliminary frozen-ACT speed results with STRIDER
+# Full frozen-ACT speed results with STRIDER
 
 All rows use the same 50 final seeds within each task. Successful episodes are
 charged through first success; failures are charged through their terminal
@@ -8,6 +8,10 @@ speed only on successful episodes.
 | Task | Method | Success | SR | Successful-rollout speedup | Throughput delta vs 1x | Safety | Physics |
 |---|---|---:|---:|---:|---:|---:|---:|
 | Pick | Native 1x | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
+| Pick | Uniform 1.5x | 50/50 | 1.00 | 1.441x | +44.1% | 0 | 0 |
+| Pick | Uniform 2x | 50/50 | 1.00 | 1.857x | +85.7% | 0 | 0 |
+| Pick | Uniform 2.5x | 48/50 | 0.96 | 2.274x | +115.3% | 0 | 0 |
+| Pick | Uniform 3x | 45/50 | 0.90 | 2.712x | +136.0% | 0 | 0 |
 | Pick | Uniform sweep | 50/50 | 1.00 | 1.858x | +85.8% | 0 | 0 |
 | Pick | Learned subtask | 50/50 | 1.00 | 1.341x | +34.1% | 0 | 0 |
 | Pick | Tabular RL | 50/50 | 1.00 | 1.522x | +52.2% | 0 | 0 |
@@ -16,6 +20,10 @@ speed only on successful episodes.
 | Pick | SAIL-inspired | 50/50 | 1.00 | 1.044x | +4.4% | 0 | 0 |
 | Pick | STRIDER | 48/50 | 0.96 | 2.276x | +115.5% | 0 | 0 |
 | Tea | Native 1x | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
+| Tea | Uniform 1.5x | 46/50 | 0.92 | 1.444x | +31.8% | 0 | 0 |
+| Tea | Uniform 2x | 38/50 | 0.76 | 1.878x | +40.6% | 0 | 0 |
+| Tea | Uniform 2.5x | 19/50 | 0.38 | 2.290x | -14.9% | 0 | 0 |
+| Tea | Uniform 3x | 6/50 | 0.12 | 2.744x | -68.1% | 0 | 0 |
 | Tea | Uniform sweep | 44/50 | 0.88 | 1.448x | +26.0% | 0 | 0 |
 | Tea | Learned subtask | 49/50 | 0.98 | 1.530x | +49.6% | 0 | 0 |
 | Tea | Tabular RL | 49/50 | 0.98 | 1.449x | +41.7% | 0 | 0 |
@@ -24,6 +32,10 @@ speed only on successful episodes.
 | Tea | SAIL-inspired | 49/50 | 0.98 | 1.138x | +11.1% | 0 | 0 |
 | Tea | STRIDER | 50/50 | 1.00 | 1.000x | +0.0% | 0 | 0 |
 | Insertion | Native 1x | 49/50 | 0.98 | 1.000x | +0.0% | 0 | 0 |
+| Insertion | Uniform 1.5x | 48/50 | 0.96 | 1.445x | +41.5% | 0 | 0 |
+| Insertion | Uniform 2x | 39/50 | 0.78 | 1.872x | +47.7% | 0 | 0 |
+| Insertion | Uniform 2.5x | 33/50 | 0.66 | 2.287x | +52.9% | 0 | 0 |
+| Insertion | Uniform 3x | 31/50 | 0.62 | 2.688x | +69.7% | 0 | 0 |
 | Insertion | Uniform sweep | 39/50 | 0.78 | 1.871x | +47.6% | 0 | 0 |
 | Insertion | Learned subtask | 48/50 | 0.96 | 1.426x | +39.4% | 0 | 0 |
 | Insertion | Tabular RL | 46/50 | 0.92 | 1.141x | +6.8% | 0 | 0 |
@@ -44,12 +56,16 @@ therefore preliminary rather than the final paper benchmark.
 
 ## Audit receipt
 
-- Audit workflow: `speedtuning-act-strider-table-audit-20260824-v1-3`
-- Audit source: `fb54928c0b780a367e09d3af0ddb985545580e99`
+- Audit workflow: `speedtuning-act-strider-table-audit-20260825-v3-1`
+- Audit source: `b6a4cd489335d5e25daf3bc7f4f4f241ba61f5dc`
 - Machine-readable report SHA-256:
-  `fb88049f35b7273293d305f4dcf6d66624abc123ce3bebf0bfd86a3f5c6a875e`
+  `fd7bc43c19967fd9f9cb3a4d514034341609197519f5e4a42a97616bff2447da`
 - Markdown report SHA-256:
-  `f3dc4c833619efe70fb3f7acff43c3b01f1631813e5f011a609580d4b87d57fe`
+  `9970cf5f06b7e38340eef1b87d321346887b73c07704f6773889a8ae6ae2f0e8`
+- Fixed-uniform source:
+  `07949ba566f0f1fa68f8dc18cc527a5bbade0160`
+- Fixed-uniform accounting: `600` new episodes; `150` native controls
+  reused; `0` native reruns.
 - Pick/Insertion STRIDER source:
   `0e57760999bc01a1ef021904a83df96ab47c4e46`
 - Tea STRIDER source: `3adaa1e986acce7b2f73953218adaa9c9b6a3789`

@@ -1,9 +1,6 @@
 import json
 from pathlib import Path
 
-from scripts import run_act_strider_tea_volume_v5 as implementation
-
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EXPERIMENT_ROOT = REPO_ROOT / "experiments" / "act_strider_tea_volume_v6"
 
@@ -12,19 +9,13 @@ def _seeds(bank):
     return set(range(bank["start"], bank["start"] + bank["count"]))
 
 
-def test_v6_overlap_criterion_hashes_are_frozen_and_current():
-    old_schema = implementation.SUCCESS_CRITERION_SCHEMA
-    try:
-        implementation.SUCCESS_CRITERION_SCHEMA = (
-            "tea-cup-volume-overlap-success-v1"
-        )
-        criterion = implementation.checked_success_criterion(
-            EXPERIMENT_ROOT / "SUCCESS_CRITERION.json"
-        )
-    finally:
-        implementation.SUCCESS_CRITERION_SCHEMA = old_schema
+def test_v6_overlap_criterion_receipt_remains_historical():
+    criterion = json.loads((EXPERIMENT_ROOT / "SUCCESS_CRITERION.json").read_text())
     assert criterion["center_inside_required"] is False
     assert criterion["tea_bag_half_extents_m"] == [0.02, 0.02, 0.02]
+    assert criterion["files"]["sim_tasks.py"]["sha256"] == (
+        "cdc2cf03ae560903503905496b2ce4087269c0963be3c5f2b73a8398f9a538ab"
+    )
 
 
 def test_v6_banks_are_fresh_and_disjoint_from_v4_and_v5():

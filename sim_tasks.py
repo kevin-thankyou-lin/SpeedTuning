@@ -218,6 +218,17 @@ def tea_bag_overlaps_cup_volume(physics) -> bool:
     )
 
 
+def tea_bag_center_inside_cup_volume(physics) -> bool:
+    """Return whether the tea-bag geom center lies inside the cup interior."""
+
+    return _point_in_oriented_box(
+        physics.named.data.geom_xpos["tea_bag"],
+        physics.named.data.site_xpos["cup_success_volume"],
+        physics.named.data.site_xmat["cup_success_volume"],
+        physics.named.model.site_size["cup_success_volume"],
+    )
+
+
 def transfer_cube_reward(physics) -> int:
     pairs = contact_pairs(physics)
     left = _gripper_touch(pairs, "red_box", "left")
@@ -265,7 +276,7 @@ def tea_bag_reward(physics) -> int:
     on_table = _touching(pairs, "tea_bag", "table") or _touching(
         pairs, "red_box", "table"
     )
-    in_cup = tea_bag_overlaps_cup_volume(physics)
+    in_cup = tea_bag_center_inside_cup_volume(physics)
 
     if in_cup:
         return 3

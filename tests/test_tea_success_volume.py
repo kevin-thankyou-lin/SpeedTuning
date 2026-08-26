@@ -5,7 +5,12 @@ from xml.etree import ElementTree
 import numpy as np
 import pytest
 
-from sim_tasks import _oriented_boxes_overlap, _point_in_oriented_box, tea_bag_reward
+from sim_tasks import (
+    _oriented_boxes_overlap,
+    _point_in_oriented_box,
+    tea_bag_overlaps_cup_volume,
+    tea_bag_reward,
+)
 
 
 ASSET_ROOT = Path(__file__).resolve().parents[1] / "assets"
@@ -106,8 +111,10 @@ def test_tea_reward_succeeds_anywhere_inside_inclusive_cup_volume(center):
         [-0.1599, 0.6, 0.06],
     ],
 )
-def test_tea_reward_accepts_bag_volume_intersecting_cup_volume(center):
-    assert tea_bag_reward(_physics_with_tea_bag(center)) == 3
+def test_tea_reward_rejects_overlap_only_when_center_is_outside(center):
+    physics = _physics_with_tea_bag(center)
+    assert tea_bag_overlaps_cup_volume(physics)
+    assert tea_bag_reward(physics) == 0
 
 
 @pytest.mark.parametrize(

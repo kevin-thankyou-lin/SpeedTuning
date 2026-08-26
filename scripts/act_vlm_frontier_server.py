@@ -69,6 +69,7 @@ class ACTFrontierRuntime:
         detector_checkpoint: Path,
         detector_source: Path,
         device: str,
+        critical_source_overrides: dict[str, str] | None = None,
     ):
         if git_head() != source_commit:
             raise RuntimeError("checked-out source does not match requested commit")
@@ -78,8 +79,18 @@ class ACTFrontierRuntime:
         if not self.manifest.get("parity_gate", {}).get("passed"):
             raise RuntimeError("ACT source manifest lacks the passed uniform-1x gate")
         tracked = self.manifest["source"]["tracked_file_sha256"]
+        overrides = dict(critical_source_overrides or {})
+        unknown_overrides = set(overrides) - set(CRITICAL_SOURCES)
+        if unknown_overrides:
+            raise ValueError(
+                f"unknown critical source overrides: {sorted(unknown_overrides)}"
+            )
+        self.critical_source_hashes = {}
         for name in CRITICAL_SOURCES:
-            checked_hash(REPO_ROOT / name, tracked[name])
+            expected = overrides.get(name, tracked[name])
+            self.critical_source_hashes[name] = checked_hash(
+                REPO_ROOT / name, expected
+            )
 
         if task_label not in self.manifest["tasks"]:
             raise ValueError(f"unknown task label: {task_label}")
@@ -163,6 +174,7 @@ class ACTFrontierRuntime:
             "task_label": self.task_label,
             "task": self.task,
             "policy_artifacts": self.task_manifest["artifacts"],
+            "critical_source_hashes": self.critical_source_hashes,
             "detector": DETECTOR_HASHES,
             "controller": {
                 "base_policy": "frozen_multiview_act",

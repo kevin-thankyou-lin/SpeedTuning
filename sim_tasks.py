@@ -123,6 +123,40 @@ def _gripper_touch(
     )
 
 
+def _point_in_oriented_box(
+    point: np.ndarray,
+    center: np.ndarray,
+    rotation: np.ndarray,
+    half_extents: np.ndarray,
+    *,
+    tolerance: float = 1e-9,
+) -> bool:
+    """Return whether a world-space point lies inside an oriented box.
+
+    MuJoCo exposes a box site's world rotation as a local-to-world matrix, so
+    its transpose maps the point offset back into the site's local frame.
+    Boundaries are inclusive to avoid contact-scale numerical flicker.
+    """
+
+    point = np.asarray(point, dtype=np.float64)
+    center = np.asarray(center, dtype=np.float64)
+    rotation = np.asarray(rotation, dtype=np.float64).reshape(3, 3)
+    half_extents = np.asarray(half_extents, dtype=np.float64)
+    local_point = rotation.T @ (point - center)
+    return bool(np.all(np.abs(local_point) <= half_extents + tolerance))
+
+
+def tea_bag_in_cup_volume(physics) -> bool:
+    """Return whether the tea-bag center is inside the cup's interior volume."""
+
+    return _point_in_oriented_box(
+        physics.named.data.geom_xpos["tea_bag"],
+        physics.named.data.site_xpos["cup_success_volume"],
+        physics.named.data.site_xmat["cup_success_volume"],
+        physics.named.model.site_size["cup_success_volume"],
+    )
+
+
 def transfer_cube_reward(physics) -> int:
     pairs = contact_pairs(physics)
     left = _gripper_touch(pairs, "red_box", "left")
@@ -170,7 +204,7 @@ def tea_bag_reward(physics) -> int:
     on_table = _touching(pairs, "tea_bag", "table") or _touching(
         pairs, "red_box", "table"
     )
-    in_cup = _touching(pairs, "cup_base", "tea_bag")
+    in_cup = tea_bag_in_cup_volume(physics)
 
     if in_cup:
         return 3

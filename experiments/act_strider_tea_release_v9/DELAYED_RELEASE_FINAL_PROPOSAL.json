@@ -1,0 +1,13 @@
+{
+  "schema": "act-strider-tea-delayed-release-final-proposal-v1",
+  "task_label": "tea",
+  "candidate_origin": "user_informed_before_v9_final_outcome",
+  "schedule": [1.5, 1.5, 1.5, 1.0],
+  "final_seed_start": 20171100,
+  "final_seed_count": 50,
+  "parent_source_commit": "ae890103d716c41128f021c9c2ca4c46c3f9cc66",
+  "parent_selection_sha256": "166b5c7dbde608b2da763dad236d9d0234b9696fb354cb073709a12aec7c1166",
+  "purpose": "Matched full-bank diagnostic of whether delaying Tea release improves reliability over the frozen STRIDER selection.",
+  "visible_parent_evidence": "search_only",
+  "parent_final_outcomes_visible": false
+}

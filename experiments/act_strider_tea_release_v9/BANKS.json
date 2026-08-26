@@ -1,0 +1,17 @@
+{
+  "schema": "act-strider-tea-release-banks-v9",
+  "bank_encoding": "inclusive start followed by consecutive integer seeds",
+  "tasks": {
+    "tea": {
+      "workflow": "speedtuning-act-strider-tea-release-20260826-v9",
+      "search": {"start": 160901100, "count": 20},
+      "final": {"start": 20171100, "count": 50}
+    }
+  },
+  "search_and_final_disjoint": true,
+  "disjoint_from_prior_speed_studies": true,
+  "v8_final_outcomes_used_only_for_posthoc_candidate_generation": true,
+  "v9_outcomes_visible_before_contract_freeze": false,
+  "success_criterion_frozen_before_any_v9_outcome": true,
+  "source_commit_is_bound_immutably_at_launch": true
+}

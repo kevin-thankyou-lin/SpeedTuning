@@ -14,11 +14,14 @@ file_sha256 = v4.file_sha256
 write_json = v4.write_json
 comma_ints = v4.comma_ints
 METRIC_REGRESSION_SEEDS = (160500100, 160500109)
+VERSION = 5
+SUCCESS_CRITERION_SCHEMA = "tea-cup-volume-success-v1"
+METRIC_REGRESSION_SCHEMA = "tea-cup-volume-metric-regression-v1"
 
 
 def checked_success_criterion(path: Path) -> dict:
     criterion = json.loads(path.read_text())
-    if criterion.get("schema") != "tea-cup-volume-success-v1":
+    if criterion.get("schema") != SUCCESS_CRITERION_SCHEMA:
         raise ValueError("unexpected Tea success criterion schema")
     repo_root = Path(__file__).resolve().parents[1]
     for relative_path, receipt in criterion["files"].items():
@@ -63,7 +66,7 @@ def run_metric_regression(runtime, root: Path) -> dict:
             raise RuntimeError(f"missing metric-regression video: {video_path}")
         records.append(record)
     report = {
-        "schema": "tea-cup-volume-metric-regression-v1",
+        "schema": METRIC_REGRESSION_SCHEMA,
         "schedule": [2.0] * 4,
         "seeds": list(METRIC_REGRESSION_SEEDS),
         "successes": sum(bool(record["success"]) for record in records),
@@ -92,9 +95,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if len(args.search_seeds) != 20 or len(set(args.search_seeds)) != 20:
-        raise ValueError("STRIDER Tea v5 requires twenty unique search seeds")
+        raise ValueError(f"STRIDER Tea v{VERSION} requires twenty unique search seeds")
     if len(args.final_seeds) != 50 or len(set(args.final_seeds)) != 50:
-        raise ValueError("STRIDER Tea v5 requires fifty unique final seeds")
+        raise ValueError(f"STRIDER Tea v{VERSION} requires fifty unique final seeds")
     if set(args.search_seeds) & set(args.final_seeds):
         raise ValueError("search and final banks must be disjoint")
 
@@ -108,7 +111,9 @@ def main() -> int:
         range(task_banks["final"]["start"], task_banks["final"]["start"] + 50)
     )
     if args.search_seeds != expected_search or args.final_seeds != expected_final:
-        raise ValueError("runtime seeds do not match frozen STRIDER Tea v5 banks")
+        raise ValueError(
+            f"runtime seeds do not match frozen STRIDER Tea v{VERSION} banks"
+        )
 
     from scripts.act_vlm_frontier_server import ACTFrontierRuntime, git_head
 
@@ -130,7 +135,7 @@ def main() -> int:
     root.mkdir(parents=True, exist_ok=True)
     identity = {
         **runtime.identity(),
-        "schema": "act-strider-tea-volume-identity-v5",
+        "schema": f"act-strider-tea-volume-identity-v{VERSION}",
         "method": "strider_conservative_uniform_lower_bound",
         "contract_sha256": file_sha256(args.contract),
         "banks_sha256": file_sha256(args.banks),
@@ -150,7 +155,7 @@ def main() -> int:
     }
     identity_path = root / "IDENTITY.json"
     if identity_path.exists() and json.loads(identity_path.read_text()) != identity:
-        raise RuntimeError("STRIDER Tea v5 root identity mismatch")
+        raise RuntimeError(f"STRIDER Tea v{VERSION} root identity mismatch")
     write_json(identity_path, identity)
 
     metric_regression = run_metric_regression(runtime, root)
@@ -163,17 +168,19 @@ def main() -> int:
         record_search_telemetry=True,
     )
     selection = v4.run_search(ledger, "tea")
-    selection["schema"] = "act-strider-tea-volume-selection-v5"
+    selection["schema"] = f"act-strider-tea-volume-selection-v{VERSION}"
     selection["success_criterion_sha256"] = identity["success_criterion_sha256"]
     selection_path = root / "SELECTION.json"
     if selection_path.exists() and json.loads(selection_path.read_text()) != selection:
-        raise RuntimeError("sealed STRIDER Tea v5 selection changed during resume")
+        raise RuntimeError(
+            f"sealed STRIDER Tea v{VERSION} selection changed during resume"
+        )
     write_json(selection_path, selection)
     selection_hash = file_sha256(selection_path)
 
     final = v4.run_final(ledger, selection)
     result = {
-        "schema": "act-strider-tea-volume-result-v5",
+        "schema": f"act-strider-tea-volume-result-v{VERSION}",
         "identity_sha256": file_sha256(identity_path),
         "selection_sha256_before_final": selection_hash,
         "selection": selection,
@@ -198,7 +205,7 @@ def main() -> int:
     write_json(
         root / "COMPLETE.json",
         {
-            "schema": "act-strider-tea-volume-completion-v5",
+            "schema": f"act-strider-tea-volume-completion-v{VERSION}",
             "identity_sha256": file_sha256(identity_path),
             "selection_sha256": selection_hash,
             "result_sha256": file_sha256(result_path),

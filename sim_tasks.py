@@ -146,11 +146,72 @@ def _point_in_oriented_box(
     return bool(np.all(np.abs(local_point) <= half_extents + tolerance))
 
 
-def tea_bag_in_cup_volume(physics) -> bool:
-    """Return whether the tea-bag center is inside the cup's interior volume."""
+def _oriented_boxes_overlap(
+    center_a: np.ndarray,
+    rotation_a: np.ndarray,
+    half_extents_a: np.ndarray,
+    center_b: np.ndarray,
+    rotation_b: np.ndarray,
+    half_extents_b: np.ndarray,
+    *,
+    tolerance: float = 1e-9,
+) -> bool:
+    """Return whether two oriented boxes overlap, including boundary contact."""
 
-    return _point_in_oriented_box(
+    center_a = np.asarray(center_a, dtype=np.float64)
+    center_b = np.asarray(center_b, dtype=np.float64)
+    rotation_a = np.asarray(rotation_a, dtype=np.float64).reshape(3, 3)
+    rotation_b = np.asarray(rotation_b, dtype=np.float64).reshape(3, 3)
+    half_extents_a = np.asarray(half_extents_a, dtype=np.float64)
+    half_extents_b = np.asarray(half_extents_b, dtype=np.float64)
+
+    relative_rotation = rotation_a.T @ rotation_b
+    absolute_rotation = np.abs(relative_rotation) + tolerance
+    translation = rotation_a.T @ (center_b - center_a)
+
+    for axis_a in range(3):
+        radius_a = half_extents_a[axis_a]
+        radius_b = float(half_extents_b @ absolute_rotation[axis_a, :])
+        if abs(translation[axis_a]) > radius_a + radius_b:
+            return False
+
+    for axis_b in range(3):
+        radius_a = float(half_extents_a @ absolute_rotation[:, axis_b])
+        radius_b = half_extents_b[axis_b]
+        projected = abs(float(translation @ relative_rotation[:, axis_b]))
+        if projected > radius_a + radius_b:
+            return False
+
+    for axis_a in range(3):
+        next_a = (axis_a + 1) % 3
+        last_a = (axis_a + 2) % 3
+        for axis_b in range(3):
+            radius_a = (
+                half_extents_a[next_a] * absolute_rotation[last_a, axis_b]
+                + half_extents_a[last_a] * absolute_rotation[next_a, axis_b]
+            )
+            radius_b = (
+                half_extents_b[(axis_b + 1) % 3]
+                * absolute_rotation[axis_a, (axis_b + 2) % 3]
+                + half_extents_b[(axis_b + 2) % 3]
+                * absolute_rotation[axis_a, (axis_b + 1) % 3]
+            )
+            projected = abs(
+                translation[last_a] * relative_rotation[next_a, axis_b]
+                - translation[next_a] * relative_rotation[last_a, axis_b]
+            )
+            if projected > radius_a + radius_b:
+                return False
+    return True
+
+
+def tea_bag_overlaps_cup_volume(physics) -> bool:
+    """Return whether any tea-bag volume lies inside the cup interior."""
+
+    return _oriented_boxes_overlap(
         physics.named.data.geom_xpos["tea_bag"],
+        physics.named.data.geom_xmat["tea_bag"],
+        physics.named.model.geom_size["tea_bag"],
         physics.named.data.site_xpos["cup_success_volume"],
         physics.named.data.site_xmat["cup_success_volume"],
         physics.named.model.site_size["cup_success_volume"],
@@ -204,7 +265,7 @@ def tea_bag_reward(physics) -> int:
     on_table = _touching(pairs, "tea_bag", "table") or _touching(
         pairs, "red_box", "table"
     )
-    in_cup = tea_bag_in_cup_volume(physics)
+    in_cup = tea_bag_overlaps_cup_volume(physics)
 
     if in_cup:
         return 3

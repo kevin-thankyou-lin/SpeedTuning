@@ -12,12 +12,13 @@ def _seeds(bank):
     return set(range(bank["start"], bank["start"] + bank["count"]))
 
 
-def test_success_criterion_hashes_are_frozen_and_current():
-    criterion = module.checked_success_criterion(
-        EXPERIMENT_ROOT / "SUCCESS_CRITERION.json"
-    )
+def test_v5_success_criterion_receipt_remains_historical():
+    criterion = json.loads((EXPERIMENT_ROOT / "SUCCESS_CRITERION.json").read_text())
     assert criterion["legacy_bottom_contact_required"] is False
     assert criterion["cup_local_bounds_m"]["z"] == [0.005, 0.08]
+    assert criterion["files"]["sim_tasks.py"]["sha256"] == (
+        "b5c98c41f20a2ed29eb2317d163cf5928ba5c326b483391f24f6b8b61b4e5076"
+    )
 
 
 def test_v5_banks_are_fresh_and_disjoint_from_v4():

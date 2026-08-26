@@ -192,6 +192,19 @@ def run_search(ledger: RolloutLedger, task_label: str) -> dict:
                 search_incumbent_records,
                 v3.SEMANTIC_FALLBACK[task_label],
             )
+            phase_index = PHASES.index(phase)
+            if float(rejected["schedule"][phase_index]) == min(ALLOWED_SPEEDS):
+                attribution_receipts.append(
+                    {
+                        "operation": "causal_backoff_exhausted",
+                        "phase": phase,
+                        "source_schedule": rejected["schedule"],
+                        "proposed_schedule": None,
+                        "evidence": evidence,
+                        "reason": "implicated phase is already at the minimum registered speed",
+                    }
+                )
+                break
             proposed = make_backoff(rejected["schedule"], phase)
             operation = "one_rung_causal_backoff"
         elif search_incumbent is not None:

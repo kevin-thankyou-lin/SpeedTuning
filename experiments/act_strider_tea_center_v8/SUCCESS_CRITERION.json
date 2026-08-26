@@ -1,0 +1,26 @@
+{
+  "schema": "tea-cup-center-success-v1",
+  "task": "tea_bag",
+  "rule": "the world-space center of the tea_bag geom lies inside the inclusive oriented box site cup_success_volume",
+  "cup_local_bounds_m": {
+    "x": [-0.04, 0.04],
+    "y": [-0.04, 0.04],
+    "z": [0.005, 0.08]
+  },
+  "tea_bag_half_extents_m": [0.02, 0.02, 0.02],
+  "success_reward": 3,
+  "legacy_bottom_contact_required": false,
+  "center_inside_required": true,
+  "overlap_only_is_success": false,
+  "files": {
+    "sim_tasks.py": {
+      "sha256": "6957973a46c8b404f61a31bad6f3032ce29c9ede6a06ae1a1ea7cb14d1f5f074"
+    },
+    "assets/bimanual_viperx_ee_transfer_tea_bag.xml": {
+      "sha256": "95ca58883f38a7480a546b962e53aa8f572c1186f3fe39c2240b087c6c06b8c8"
+    },
+    "assets/bimanual_viperx_transfer_tea_bag.xml": {
+      "sha256": "5655c7d25214124679e0510e1d95ce7ae83e484bcd42f0954cbc4f46d19ce776"
+    }
+  }
+}

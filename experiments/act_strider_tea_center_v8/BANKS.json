@@ -1,0 +1,16 @@
+{
+  "schema": "act-strider-tea-center-banks-v8",
+  "bank_encoding": "inclusive start followed by consecutive integer seeds",
+  "tasks": {
+    "tea": {
+      "workflow": "speedtuning-act-strider-tea-center-parallel-20260826-v8",
+      "search": {"start": 160801100, "count": 20},
+      "final": {"start": 20161100, "count": 50}
+    }
+  },
+  "search_and_final_disjoint": true,
+  "disjoint_from_prior_speed_studies": true,
+  "v7_outcomes_visible_to_search": false,
+  "success_criterion_frozen_before_any_v8_outcome": true,
+  "source_commit_is_bound_immutably_at_launch": true
+}

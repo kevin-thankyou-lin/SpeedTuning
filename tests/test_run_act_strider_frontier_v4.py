@@ -89,3 +89,52 @@ def test_search_falls_back_to_native_without_qualified_uniform(tmp_path):
     assert selection["selected_schedule"] == [1.0] * 4
     assert selection["uniform_incumbent_sha256"] is None
     assert selection["search_rollouts"] == 60
+
+
+def test_search_stops_when_attributed_phase_reaches_registered_floor(
+    tmp_path, monkeypatch
+):
+    attempted = []
+
+    class Runtime:
+        def rollout(self, schedule, seed, *, record_attribution_telemetry=False):
+            schedule = list(schedule)
+            attempted.append(schedule)
+            index = seed % 20
+            if schedule == [2.0] * 4:
+                return record(seed, schedule, index < 19, 150)
+            if schedule in (
+                [2.5] * 4,
+                [2.5, 2.5, 2.0, 2.5],
+                [2.5, 2.5, 1.5, 2.5],
+                [2.5, 2.5, 1.0, 2.5],
+            ):
+                return record(seed, schedule, index < 3, 120)
+            raise AssertionError(f"unexpected schedule: {schedule}")
+
+    monkeypatch.setattr(
+        module.v3,
+        "paired_failure_phase",
+        lambda *_args, **_kwargs: ("transport", {"source": "test"}),
+    )
+    ledger = module.RolloutLedger(
+        Runtime(),
+        tmp_path,
+        list(range(20)),
+        list(range(100, 150)),
+        record_search_telemetry=True,
+    )
+    selection = module.run_search(ledger, "tea")
+
+    assert selection["selected_schedule"] == [2.0] * 4
+    assert selection["search_rollouts"] == 40
+    assert selection["unused_budget"] == 20
+    assert selection["attribution_receipts"][-1] == {
+        "operation": "causal_backoff_exhausted",
+        "phase": "transport",
+        "source_schedule": [2.5, 2.5, 1.0, 2.5],
+        "proposed_schedule": None,
+        "evidence": {"source": "test"},
+        "reason": "implicated phase is already at the minimum registered speed",
+    }
+    assert all(schedule[2] >= 1.0 for schedule in attempted)

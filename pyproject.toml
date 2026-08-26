@@ -70,6 +70,7 @@ py-modules = [
     "ee_sim_env",
     "experiment_config",
     "imitation_data",
+    "original_diffusion",
     "policy",
     "policy_loader",
     "policy_speed_env",

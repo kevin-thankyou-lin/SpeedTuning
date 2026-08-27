@@ -53,6 +53,7 @@ def main() -> int:
     if not parent_result_path.is_file():
         raise RuntimeError("parent final bank is not sealed")
 
+    tea.SUCCESS_CRITERION_SCHEMA = "tea-cup-center-success-v1"
     criterion = tea.checked_success_criterion(args.success_criterion)
     from scripts.act_vlm_frontier_server import ACTFrontierRuntime, git_head
 

@@ -23,3 +23,4 @@ def test_delayed_final_runner_records_actual_videos():
     assert "VideoFinalLedger" in source
     assert '"actual_episode_videos": True' in source
     assert '"same_gpu_controller_concurrency": False' in source
+    assert 'tea.SUCCESS_CRITERION_SCHEMA = "tea-cup-center-success-v1"' in source

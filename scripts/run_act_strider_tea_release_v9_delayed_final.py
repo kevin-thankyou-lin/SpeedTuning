@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+
+os.environ.setdefault("MUJOCO_GL", "egl")
 
 from scripts import run_act_strider_frontier_v4 as v4
 from scripts import run_act_strider_tea_release_v9 as v9

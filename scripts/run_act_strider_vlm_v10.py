@@ -512,7 +512,11 @@ def main() -> int:
     if len(search_pool) < 40 or len(final_pool) < 70:
         raise ValueError("insufficient registered reserve seeds")
 
-    overrides = None
+    # The frozen ACT run manifest predates the task-native success-checker
+    # update in this source commit.  Pin the current source file explicitly for
+    # every task: Pick and Insertion retain their existing task checks, while
+    # Tea additionally verifies the center-inside-cup criterion receipt below.
+    overrides = {"sim_tasks.py": v4.file_sha256(Path("sim_tasks.py"))}
     criterion_receipt = None
     if args.task_label == "tea":
         if args.success_criterion is None:
@@ -521,9 +525,8 @@ def main() -> int:
 
         tea.SUCCESS_CRITERION_SCHEMA = "tea-cup-center-success-v1"
         criterion_receipt = tea.checked_success_criterion(args.success_criterion)
-        overrides = {
-            "sim_tasks.py": criterion_receipt["files"]["sim_tasks.py"]["sha256"]
-        }
+        if overrides["sim_tasks.py"] != criterion_receipt["files"]["sim_tasks.py"]["sha256"]:
+            raise RuntimeError("Tea success criterion does not match sim_tasks.py")
 
     from scripts.act_vlm_frontier_server import ACTFrontierRuntime, git_head
 

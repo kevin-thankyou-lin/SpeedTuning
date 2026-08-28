@@ -1,0 +1,22 @@
+{
+  "schema": "act-strider-codex-matched-final50-banks-v15",
+  "tasks": {
+    "pick": {
+      "final_primary": {"start": 242000000, "count": 50},
+      "final_reserve": {"start": 242001000, "count": 20}
+    },
+    "tea": {
+      "final_primary": {"start": 242000100, "count": 50},
+      "final_reserve": {"start": 242001100, "count": 20}
+    },
+    "insertion": {
+      "final_primary": {"start": 242000200, "count": 50},
+      "final_reserve": {"start": 242001200, "count": 20}
+    }
+  },
+  "same_ordered_primary_and_replacement_poses_for_every_controller": true,
+  "simulator_invalid_pairs_excluded_and_replaced_from_registered_reserve": true,
+  "all_primary_and_reserve_banks_pairwise_disjoint": true,
+  "disjoint_from_prior_speed_studies": true,
+  "selection_frozen_before_final_bank_opened": true
+}

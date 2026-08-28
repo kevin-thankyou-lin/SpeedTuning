@@ -24,4 +24,4 @@ def test_delayed_final_runner_records_actual_videos():
     assert '"actual_episode_videos": True' in source
     assert '"same_gpu_controller_concurrency": False' in source
     assert 'tea.SUCCESS_CRITERION_SCHEMA = "tea-cup-center-success-v1"' in source
-    assert 'os.environ.setdefault("MUJOCO_GL", "egl")' in source
+    assert 'def main() -> int:\n    os.environ.setdefault("MUJOCO_GL", "egl")' in source

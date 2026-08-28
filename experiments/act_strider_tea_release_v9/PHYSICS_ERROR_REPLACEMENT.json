@@ -1,0 +1,21 @@
+{
+  "schema": "act-strider-tea-physics-error-replacement-v1",
+  "task_label": "tea",
+  "target_valid_pairs": 50,
+  "primary_seed_start": 20171100,
+  "primary_seed_count": 50,
+  "reserve_seed_start": 20171150,
+  "reserve_seed_count": 10,
+  "excluded_primary_seeds": [20171107],
+  "exclusion_rule": "Exclude a matched pose only for a simulator physics_error; task failures and safety violations remain scored failures.",
+  "uniform_schedule": [1.5, 1.5, 1.5, 1.5],
+  "delayed_release_schedule": [1.5, 1.5, 1.5, 1.0],
+  "parent_result_sha256": "c8c3dd0f005e2b1c87b839441493441e037d8c127ff8a8ab35b42abee4b0e591",
+  "aborted_identity_sha256": "42e48c3ee671ed6ab3de28b5d15308cc7233817be576b5597fed25d6aa452c63",
+  "aborted_log_sha256": "f12973b8b5b42a05462c62d16f55cacf3dabbc6b5908256515091bbd35e7edb9",
+  "aborted_physics_error_seed": 20171107,
+  "aborted_physics_error_schedule": [1.5, 1.5, 1.5, 1.0],
+  "prior_valid_delayed_cache_seeds": [20171100, 20171101, 20171102, 20171103, 20171104, 20171105, 20171106],
+  "prior_invalid_attempts_count_toward_physical_cost": true,
+  "replacement_outcomes_visible_when_rule_frozen": false
+}

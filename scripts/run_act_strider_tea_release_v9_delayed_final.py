@@ -8,14 +8,13 @@ import json
 import os
 from pathlib import Path
 
-os.environ.setdefault("MUJOCO_GL", "egl")
-
 from scripts import run_act_strider_frontier_v4 as v4
 from scripts import run_act_strider_tea_release_v9 as v9
 from scripts import run_act_strider_tea_volume_v5 as tea
 
 
 def main() -> int:
+    os.environ.setdefault("MUJOCO_GL", "egl")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--parent-root", type=Path, required=True)

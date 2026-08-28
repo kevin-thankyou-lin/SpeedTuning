@@ -11,6 +11,7 @@ from pathlib import Path
 
 from scripts import run_act_strider_frontier_v3 as telemetry
 from scripts import run_act_strider_frontier_v4 as v4
+from scripts.codex_agent_failure_attribution import CodexExchangeAttributor
 from scripts.qwen_vlm_failure_attribution import (
     QwenVideoAttributor,
     aggregate_attributions,
@@ -22,6 +23,7 @@ STAGES = v4.STAGES
 SEARCH_BUDGET = 120
 SEARCH_VALID_TARGET = 20
 FINAL_VALID_TARGET = 50
+MAX_ATTRIBUTION_PAIRS = 3
 UNIFORM_LADDER = (2.0, 2.5, 3.0, 3.5)
 VLM_LOCK = Path("/tmp/strider-qwen-v10.lock")
 
@@ -299,9 +301,12 @@ def _diagnose_vlm(
     failures = []
     with VLM_LOCK.open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        for candidate in rejected_records:
-            if v4.base.successful(candidate):
-                continue
+        failures_to_diagnose = [
+            candidate
+            for candidate in rejected_records
+            if not v4.base.successful(candidate)
+        ][:MAX_ATTRIBUTION_PAIRS]
+        for candidate in failures_to_diagnose:
             seed = int(candidate["seed"])
             reference = references.get(seed)
             if reference is None:
@@ -499,7 +504,12 @@ def main() -> int:
     parser.add_argument("--success-criterion", type=Path)
     parser.add_argument("--detector-checkpoint", type=Path, required=True)
     parser.add_argument("--detector-source", type=Path, required=True)
-    parser.add_argument("--qwen-model", type=Path, required=True)
+    parser.add_argument(
+        "--attribution-backend", choices=("qwen", "codex-agent"), default="qwen"
+    )
+    parser.add_argument("--qwen-model", type=Path)
+    parser.add_argument("--codex-exchange-root", type=Path)
+    parser.add_argument("--codex-model", default="gpt-5.6-sol")
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
@@ -541,13 +551,29 @@ def main() -> int:
         device=args.device,
         critical_source_overrides=overrides,
     )
-    attributor = QwenVideoAttributor(args.qwen_model, device=args.device)
+    if args.attribution_backend == "qwen":
+        if args.qwen_model is None:
+            raise ValueError("Qwen attribution requires --qwen-model")
+        attributor = QwenVideoAttributor(args.qwen_model, device=args.device)
+        study_version = "v10"
+    else:
+        if args.codex_exchange_root is None:
+            raise ValueError("Codex attribution requires --codex-exchange-root")
+        attributor = CodexExchangeAttributor(
+            args.codex_exchange_root,
+            model=args.codex_model,
+        )
+        study_version = "v11"
     root = args.root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     identity = {
         **runtime.identity(),
-        "schema": "act-strider-vlm-identity-v10",
-        "method": "strider_blinded_vlm_causal_failure_attribution",
+        "schema": f"act-strider-vlm-identity-{study_version}",
+        "method": (
+            "strider_blinded_codex_agent_causal_failure_attribution"
+            if args.attribution_backend == "codex-agent"
+            else "strider_blinded_vlm_causal_failure_attribution"
+        ),
         "contract_sha256": v4.file_sha256(args.contract),
         "banks_sha256": v4.file_sha256(args.banks),
         "search_seed_pool": search_pool,
@@ -560,6 +586,7 @@ def main() -> int:
         "physics_error_policy": "exclude_invalid_pair_and_use_registered_reserve",
         "phase_source": "learned_online_rgb_plus_robot_proprioception",
         "vlm": attributor.identity(),
+        "maximum_matched_failure_pairs_per_rejected_schedule": MAX_ATTRIBUTION_PAIRS,
         "tea_success_criterion": criterion_receipt,
     }
     identity_path = root / "IDENTITY.json"
@@ -592,7 +619,7 @@ def main() -> int:
     if v4.file_sha256(selection_path) != selection_hash:
         raise RuntimeError("selection changed after final bank opened")
     result = {
-        "schema": "act-strider-vlm-result-v10",
+        "schema": f"act-strider-vlm-result-{study_version}",
         "task_label": args.task_label,
         "identity_sha256": v4.file_sha256(identity_path),
         "selection_sha256_before_final": selection_hash,
@@ -611,7 +638,7 @@ def main() -> int:
     v4.write_json(
         root / "COMPLETE.json",
         {
-            "schema": "act-strider-vlm-completion-v10",
+            "schema": f"act-strider-vlm-completion-{study_version}",
             "identity_sha256": v4.file_sha256(identity_path),
             "selection_sha256": selection_hash,
             "result_sha256": v4.file_sha256(result_path),

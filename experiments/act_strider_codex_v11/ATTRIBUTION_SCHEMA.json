@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "observed_failure_phase",
+    "causal_phase",
+    "confidence",
+    "evidence"
+  ],
+  "properties": {
+    "observed_failure_phase": {
+      "type": "string",
+      "enum": ["pre_grasp", "grasp_lift", "transport", "interaction"]
+    },
+    "causal_phase": {
+      "type": "string",
+      "enum": ["pre_grasp", "grasp_lift", "transport", "interaction"]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "evidence": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

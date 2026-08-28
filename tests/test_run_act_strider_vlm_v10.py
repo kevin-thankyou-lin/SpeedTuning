@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from scripts import run_act_strider_frontier_v4 as v4
+from scripts.codex_agent_failure_attribution import sanitized_record
 from scripts.run_act_strider_vlm_v10 import ValidVideoLedger, run_search
 
 
@@ -69,7 +70,11 @@ class FakeRuntime:
 
 
 class FakeAttributor:
+    def __init__(self):
+        self.calls = 0
+
     def diagnose(self, **kwargs):
+        self.calls += 1
         candidate = kwargs["candidate_record"]
         return {
             "schema": "fake",
@@ -132,3 +137,46 @@ def test_final_excludes_qacc_pair_and_uses_registered_reserve(tmp_path):
     ]
     assert final["scientific_rollouts"] == 100
     assert json.loads((tmp_path / "final" / "controllers" / v4.schedule_sha256([2.0] * 4) / "states" / "1003.json").read_text())["simulator_invalid"]
+
+
+def test_codex_record_is_sanitized_of_simulator_telemetry(tmp_path):
+    record = FakeRuntime().rollout(
+        [2.0] * 4,
+        100,
+        video_path=tmp_path / "unused.mp4",
+        record_attribution_telemetry=True,
+    )
+    sanitized = sanitized_record(record)
+
+    assert set(sanitized) == {
+        "seed",
+        "schedule",
+        "success",
+        "physics_steps",
+        "first_success_step",
+        "phase_timeline",
+    }
+    assert "attribution_telemetry" not in sanitized
+    assert "object_positions" not in json.dumps(sanitized)
+
+
+def test_vlm_attribution_is_capped_at_three_matched_failures(tmp_path):
+    class FiveFailureRuntime(FakeRuntime):
+        def rollout(self, schedule, seed, **kwargs):
+            record = super().rollout(schedule, seed, **kwargs)
+            if list(map(float, schedule)) == [2.5] * 4:
+                record["success"] = seed % 100 < 15
+                record["first_success_step"] = (
+                    record["physics_steps"] if record["success"] else None
+                )
+            return record
+
+    attributor = FakeAttributor()
+    ledger = ValidVideoLedger(
+        FiveFailureRuntime(), tmp_path, list(range(100, 140)), list(range(1000, 1070))
+    )
+    result = run_search(ledger, "tea", attributor)
+
+    assert result["rejected_uniform"]["summary"]["successes"] == 15
+    assert attributor.calls == 3
+    assert len(result["vlm_pair_receipts"]) == 3

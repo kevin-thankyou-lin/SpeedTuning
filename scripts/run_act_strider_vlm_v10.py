@@ -26,6 +26,11 @@ FINAL_VALID_TARGET = 50
 MAX_ATTRIBUTION_PAIRS = 3
 UNIFORM_LADDER = (2.0, 2.5, 3.0, 3.5)
 VLM_LOCK = Path("/tmp/strider-qwen-v10.lock")
+QWEN_STUDY_VERSION = "v10"
+CODEX_STUDY_VERSION = "v11"
+QWEN_METHOD = "strider_blinded_vlm_causal_failure_attribution"
+CODEX_METHOD = "strider_blinded_codex_agent_causal_failure_attribution"
+SELECTION_SCHEMA = "act-strider-vlm-selection-v10"
 
 
 def simulator_valid(record: dict) -> bool:
@@ -469,7 +474,7 @@ def run_search(
         "repair_reports": repair_reports,
     }
     return {
-        "schema": "act-strider-vlm-selection-v10",
+        "schema": SELECTION_SCHEMA,
         "task_label": task_label,
         "selected_schedule": selected["schedule"],
         "selected_schedule_sha256": selected["schedule_sha256"],
@@ -510,6 +515,11 @@ def main() -> int:
     parser.add_argument("--qwen-model", type=Path)
     parser.add_argument("--codex-exchange-root", type=Path)
     parser.add_argument("--codex-model", default="gpt-5.6-sol")
+    parser.add_argument(
+        "--search-only",
+        action="store_true",
+        help="seal the search selection without opening the final bank",
+    )
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
 
@@ -555,7 +565,8 @@ def main() -> int:
         if args.qwen_model is None:
             raise ValueError("Qwen attribution requires --qwen-model")
         attributor = QwenVideoAttributor(args.qwen_model, device=args.device)
-        study_version = "v10"
+        study_version = QWEN_STUDY_VERSION
+        method_name = QWEN_METHOD
     else:
         if args.codex_exchange_root is None:
             raise ValueError("Codex attribution requires --codex-exchange-root")
@@ -563,17 +574,14 @@ def main() -> int:
             args.codex_exchange_root,
             model=args.codex_model,
         )
-        study_version = "v11"
+        study_version = CODEX_STUDY_VERSION
+        method_name = CODEX_METHOD
     root = args.root.resolve()
     root.mkdir(parents=True, exist_ok=True)
     identity = {
         **runtime.identity(),
         "schema": f"act-strider-vlm-identity-{study_version}",
-        "method": (
-            "strider_blinded_codex_agent_causal_failure_attribution"
-            if args.attribution_backend == "codex-agent"
-            else "strider_blinded_vlm_causal_failure_attribution"
-        ),
+        "method": method_name,
         "contract_sha256": v4.file_sha256(args.contract),
         "banks_sha256": v4.file_sha256(args.banks),
         "search_seed_pool": search_pool,
@@ -601,6 +609,25 @@ def main() -> int:
         raise RuntimeError("sealed selection changed during resume")
     v4.write_json(selection_path, selection)
     selection_hash = v4.file_sha256(selection_path)
+
+    if args.search_only:
+        completion = {
+            "schema": f"act-strider-vlm-search-completion-{study_version}",
+            "identity_sha256": v4.file_sha256(identity_path),
+            "selection_sha256": selection_hash,
+            "search_valid_rollouts": ledger.search_valid_rollouts_used(),
+            "search_physical_attempts": ledger.search_attempts_used(),
+            "final_bank_opened": False,
+        }
+        v4.write_json(root / "SEARCH_COMPLETE.json", completion)
+        print(
+            json.dumps(
+                {"selection": selection, "completion": completion},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 0
 
     named = {
         "native_1x": [1.0] * 4,

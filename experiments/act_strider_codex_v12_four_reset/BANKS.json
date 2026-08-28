@@ -1,0 +1,31 @@
+{
+  "schema": "act-strider-codex-four-reset-banks-v12",
+  "bank_encoding": "inclusive start followed by consecutive integer seeds",
+  "reset_sampling": "four fresh iid draws from each task's frozen uniform reset distribution",
+  "tasks": {
+    "pick": {
+      "search_primary": {"start": 172000000, "count": 4},
+      "search_reserve": {"start": 172001000, "count": 36},
+      "final_primary": {"start": 21300000, "count": 50},
+      "final_reserve": {"start": 21301000, "count": 20}
+    },
+    "tea": {
+      "search_primary": {"start": 172000100, "count": 4},
+      "search_reserve": {"start": 172001100, "count": 36},
+      "final_primary": {"start": 21300100, "count": 50},
+      "final_reserve": {"start": 21301100, "count": 20}
+    },
+    "insertion": {
+      "search_primary": {"start": 172000200, "count": 4},
+      "search_reserve": {"start": 172001200, "count": 36},
+      "final_primary": {"start": 21300200, "count": 50},
+      "final_reserve": {"start": 21301200, "count": 20}
+    }
+  },
+  "same_ordered_four_primary_resets_for_every_candidate": true,
+  "simulator_invalid_attempts_excluded_and_replaced_from_registered_reserve": true,
+  "all_primary_and_reserve_banks_pairwise_disjoint": true,
+  "disjoint_from_prior_speed_studies": true,
+  "historical_schedule_outcomes_visible_to_search": false,
+  "final_bank_opened_in_this_iteration": false
+}

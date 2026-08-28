@@ -163,8 +163,16 @@ def main() -> int:
 
     if not (args.codex_home / "auth.json").exists():
         raise RuntimeError("dedicated Codex home lacks auth.json")
-    if (args.codex_home / "skills").exists():
-        raise RuntimeError("dedicated attribution Codex home must not contain skills")
+    skills_root = args.codex_home / "skills"
+    custom_skills = (
+        sorted(path.name for path in skills_root.iterdir() if path.name != ".system")
+        if skills_root.exists()
+        else []
+    )
+    if custom_skills:
+        raise RuntimeError(
+            f"dedicated attribution Codex home contains custom skills: {custom_skills}"
+        )
     args.local_root.mkdir(parents=True, exist_ok=True)
     while True:
         for ready_path in remote_ready(args.remote_host, args.remote_exchange_root):

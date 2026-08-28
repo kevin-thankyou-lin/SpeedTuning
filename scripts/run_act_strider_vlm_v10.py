@@ -494,6 +494,11 @@ def run_search(
 
 
 def _range(spec: dict) -> list[int]:
+    if "seeds" in spec:
+        seeds = [int(value) for value in spec["seeds"]]
+        if len(seeds) != len(set(seeds)):
+            raise ValueError("explicit bank seeds must be unique")
+        return seeds
     return list(range(int(spec["start"]), int(spec["start"]) + int(spec["count"])))
 
 

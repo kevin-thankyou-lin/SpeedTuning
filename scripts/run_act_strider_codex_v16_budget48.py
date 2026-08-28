@@ -77,14 +77,20 @@ def checked_discovery(
 def choose_finalists(v13_selection: dict, reports: list[tuple[dict, Path]]) -> dict:
     incumbent = v13_selection.get("uniform_incumbent")
     if incumbent is None:
-        uniform = {
-            "role": "native_fallback",
-            "schedule": [1.0] * 4,
-            "schedule_sha256": v4.schedule_sha256([1.0] * 4),
-            "qualified": True,
-            "summary": None,
-        }
-        uniform_root = None
+        uniform_candidates = [
+            (report, root)
+            for report, root in reports
+            if report.get("role") in {"uniform_anchor", "uniform_ladder", "uniform_fallback"}
+        ]
+        if not uniform_candidates:
+            raise RuntimeError("native fallback discovery lacks tested uniform comparators")
+        uniform, uniform_root = max(
+            uniform_candidates,
+            key=lambda item: (
+                item[0]["summary"]["successes"],
+                item[0]["summary"]["achieved_throughput_per_step"],
+            ),
+        )
     else:
         uniform = incumbent
         uniform_root = next(
@@ -120,8 +126,6 @@ def choose_finalists(v13_selection: dict, reports: list[tuple[dict, Path]]) -> d
 def initial_records(finalist: dict, primary_seeds: list[int], runtime) -> list[dict]:
     schedule = list(v4.validate_schedule(finalist["report"]["schedule"]))
     root = finalist["candidate_root"]
-    if root is None:
-        raise RuntimeError("native fallback confirmation requires discovery receipts")
     records = []
     for seed in primary_seeds[:4]:
         state_path = root / "states" / f"{seed}.json"

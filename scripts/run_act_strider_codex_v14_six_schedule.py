@@ -136,6 +136,41 @@ def frozen_phases(selection: dict) -> set[str]:
     return set() if phase is None else {str(phase)}
 
 
+def no_incumbent_backoffs(
+    selection: dict,
+    existing_schedules: set[tuple[float, ...]],
+) -> list[dict]:
+    """Fill the six-schedule screen when every tested uniform is rejected."""
+
+    if selection.get("selected_role") != "native_fallback":
+        raise RuntimeError("missing incumbent without native fallback selection")
+    rejected = selection.get("rejected_uniform")
+    if rejected is None:
+        raise RuntimeError("native fallback lacks a rejected uniform anchor")
+    schedule = list(v4.validate_schedule(rejected["schedule"]))
+    proposals = []
+    for index, phase in enumerate(PHASES):
+        speed = schedule[index]
+        rung = ALLOWED_SPEEDS.index(speed)
+        if rung == 0:
+            continue
+        candidate = list(schedule)
+        candidate[index] = ALLOWED_SPEEDS[rung - 1]
+        if tuple(candidate) in existing_schedules:
+            continue
+        proposals.append(
+            {
+                "phase": phase,
+                "from_speed": speed,
+                "to_speed": candidate[index],
+                "schedule": candidate,
+                "predicted_saved_steps": None,
+                "fallback_reason": "no_uniform_schedule_qualified",
+            }
+        )
+    return proposals
+
+
 def build_runtime(args):
     overrides = {"sim_tasks.py": v4.file_sha256(Path("sim_tasks.py"))}
     criterion_receipt = None
@@ -201,19 +236,40 @@ def main() -> int:
     if missing <= 0:
         raise RuntimeError("parent already contains six schedules")
 
-    records = selected_records(parent, parent_selection)
-    workloads = [estimate_phase_workload(record) for record in records]
-    median_workload = {
-        phase: statistics.median(item[phase] for item in workloads) for phase in PHASES
-    }
-    frozen = frozen_phases(parent_selection)
-    proposed, full_ranking = promotion_candidates(
-        list(map(float, parent_selection["selected_schedule"])),
-        median_workload,
-        frozen,
-        existing_schedules,
-        missing,
+    parent_selected_report = next(
+        (
+            report
+            for report in parent_reports
+            if report["schedule_sha256"]
+            == parent_selection["selected_schedule_sha256"]
+        ),
+        None,
     )
+    if parent_selected_report is None:
+        proposed = no_incumbent_backoffs(parent_selection, existing_schedules)
+        if len(proposed) != missing:
+            raise RuntimeError(
+                f"no-incumbent fallback produced {len(proposed)} proposals for {missing} slots"
+            )
+        full_ranking = proposed
+        median_workload = None
+        frozen = set()
+        proposal_rule = "registered phase order over one-rung rejected-anchor backoffs"
+    else:
+        records = selected_records(parent, parent_selection)
+        workloads = [estimate_phase_workload(record) for record in records]
+        median_workload = {
+            phase: statistics.median(item[phase] for item in workloads) for phase in PHASES
+        }
+        frozen = frozen_phases(parent_selection)
+        proposed, full_ranking = promotion_candidates(
+            list(map(float, parent_selection["selected_schedule"])),
+            median_workload,
+            frozen,
+            existing_schedules,
+            missing,
+        )
+        proposal_rule = "predicted saved steps, then registered phase order"
 
     runtime, criterion_receipt = build_runtime(args)
     root = args.root.resolve()
@@ -252,7 +308,7 @@ def main() -> int:
         "selected_parent_schedule": parent_selection["selected_schedule"],
         "frozen_phases": sorted(frozen, key=PHASES.index),
         "median_native_equivalent_phase_workload": median_workload,
-        "ranking_rule": "predicted saved steps, then registered phase order",
+        "ranking_rule": proposal_rule,
         "full_ranking": full_ranking,
         "proposed": proposed,
     }
@@ -264,22 +320,31 @@ def main() -> int:
         report, _ = ledger.evaluate_search(proposal["schedule"], "one_phase_promotion")
         new_reports.append({**report, "promoted_phase": proposal["phase"]})
 
-    parent_selected = next(
-        report
-        for report in parent_reports
-        if report["schedule_sha256"] == parent_selection["selected_schedule_sha256"]
-    )
-    selectable = [parent_selected] + [
-        report
-        for report in new_reports
-        if report["qualified"]
-        and report["summary"]["achieved_throughput_per_step"]
-        >= parent_selected["summary"]["achieved_throughput_per_step"]
-    ]
-    selected = max(
-        selectable,
-        key=lambda report: report["summary"]["achieved_throughput_per_step"],
-    )
+    if parent_selected_report is None:
+        selectable = [report for report in new_reports if report["qualified"]]
+        selected = (
+            max(
+                selectable,
+                key=lambda report: report["summary"]["achieved_throughput_per_step"],
+            )
+            if selectable
+            else {
+                "schedule": [1.0] * 4,
+                "schedule_sha256": v4.schedule_sha256([1.0] * 4),
+            }
+        )
+    else:
+        selectable = [parent_selected_report] + [
+            report
+            for report in new_reports
+            if report["qualified"]
+            and report["summary"]["achieved_throughput_per_step"]
+            >= parent_selected_report["summary"]["achieved_throughput_per_step"]
+        ]
+        selected = max(
+            selectable,
+            key=lambda report: report["summary"]["achieved_throughput_per_step"],
+        )
     selection = {
         "schema": "act-strider-six-schedule-extension-selection-v14",
         "task_label": args.task_label,
@@ -291,6 +356,7 @@ def main() -> int:
         "selected_schedule": selected["schedule"],
         "selected_schedule_sha256": selected["schedule_sha256"],
         "selected_from_extension": selected in new_reports,
+        "no_qualified_uniform_fallback": parent_selected_report is None,
         "new_scientific_rollouts": ledger.search_valid_rollouts_used(),
         "cache_hits": sum(report["summary"]["episodes"] for report in parent_reports),
         "final_bank_opened": False,

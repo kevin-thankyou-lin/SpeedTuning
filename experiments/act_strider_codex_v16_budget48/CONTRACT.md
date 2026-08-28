@@ -10,7 +10,10 @@ final-bank receipt is available to selection.
    poses: exactly six schedules and 24 simulator-valid search rollouts.
 3. Freeze two finalists before further outcomes: the best qualified uniform
    incumbent and the fastest qualified adaptive schedule proposed through Codex
-   failure attribution or a causal one-phase promotion.
+   failure attribution or a causal one-phase promotion. If no uniform qualifies,
+   use the most reliable tested uniform as the comparator and fill the six-slot
+   discovery screen with all four one-phase, one-rung repairs of the rejected
+   `2x` anchor; native remains the fail-closed deployment fallback.
 4. Evaluate both finalists on four additional matched poses. Continue only if
    the adaptive schedule has at least 7/8 successes, no safety or physics event,
    and no success-count deficit relative to uniform.

@@ -13,7 +13,8 @@ final-bank receipt is available to selection.
    failure attribution or a causal one-phase promotion. If no uniform qualifies,
    use the most reliable tested uniform as the comparator and fill the six-slot
    discovery screen with all four one-phase, one-rung repairs of the rejected
-   `2x` anchor; native remains the fail-closed deployment fallback.
+   `2x` anchor. If none is `4/4`, advance only the most reliable repair to the
+   first confirmation gate; native remains the fail-closed deployment fallback.
 4. Evaluate both finalists on four additional matched poses. Continue only if
    the adaptive schedule has at least 7/8 successes, no safety or physics event,
    and no success-count deficit relative to uniform.

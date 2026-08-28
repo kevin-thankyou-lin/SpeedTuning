@@ -48,6 +48,34 @@ def test_maximum_budget_is_exactly_48():
     assert v16.DISCOVERY_ROLLOUTS + 2 * (16 - 4) == v16.MAX_SEARCH_ROLLOUTS == 48
 
 
+def test_no_incumbent_uses_native_as_deployment_fallback():
+    reports = [
+        (
+            {
+                "role": "uniform_fallback",
+                "schedule": [1.5] * 4,
+                "schedule_sha256": "uniform",
+                "qualified": False,
+                "summary": summary(3, 0.003),
+            },
+            Path("uniform"),
+        ),
+        (
+            {
+                "role": "one_phase_promotion",
+                "schedule": [2.0, 1.5, 2.0, 2.0],
+                "schedule_sha256": "adaptive",
+                "qualified": False,
+                "summary": summary(3, 0.004),
+            },
+            Path("adaptive"),
+        ),
+    ]
+    finalists = v16.choose_finalists({"uniform_incumbent": None}, reports)
+    assert finalists["native_deployment_fallback"] is True
+    assert finalists["adaptive"]["report"]["schedule"] == [2.0, 1.5, 2.0, 2.0]
+
+
 def test_registered_panels_are_outcome_blind_and_match_banks():
     root = Path("experiments/act_strider_codex_v16_budget48")
     banks = json.loads((root / "BANKS.json").read_text())

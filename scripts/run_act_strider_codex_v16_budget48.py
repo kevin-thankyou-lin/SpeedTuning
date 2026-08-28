@@ -99,20 +99,21 @@ def choose_finalists(v13_selection: dict, reports: list[tuple[dict, Path]]) -> d
             if report["schedule_sha256"] == uniform["schedule_sha256"]
         )
 
-    adaptive = [
+    adaptive_all = [
         (report, root)
         for report, root in reports
-        if report.get("qualified")
-        and report.get("role")
+        if report.get("role")
         in {"vlm_causal_repair", "telemetry_repair_control", "one_phase_promotion"}
     ]
-    if not adaptive:
-        raise RuntimeError("six-schedule discovery produced no qualified adaptive finalist")
+    if not adaptive_all:
+        raise RuntimeError("six-schedule discovery produced no adaptive candidate")
+    adaptive = [item for item in adaptive_all if item[0].get("qualified")]
+    adaptive_pool = adaptive or adaptive_all
     adaptive_report, adaptive_root = max(
-        adaptive,
+        adaptive_pool,
         key=lambda item: (
-            item[0]["summary"]["achieved_throughput_per_step"],
             item[0]["summary"]["successes"],
+            item[0]["summary"]["achieved_throughput_per_step"],
         ),
     )
     if adaptive_report["schedule_sha256"] == uniform["schedule_sha256"]:
@@ -120,6 +121,7 @@ def choose_finalists(v13_selection: dict, reports: list[tuple[dict, Path]]) -> d
     return {
         "uniform": {"report": uniform, "candidate_root": uniform_root},
         "adaptive": {"report": adaptive_report, "candidate_root": adaptive_root},
+        "native_deployment_fallback": incumbent is None,
     }
 
 
@@ -217,7 +219,15 @@ def run_confirmation(
             break
     if final_decision is None:
         raise RuntimeError("confirmation did not reach a terminal decision")
-    selected_name = "adaptive" if final_decision == "select_adaptive" else "uniform"
+    if final_decision == "select_adaptive":
+        selected_name = "adaptive"
+        selected_schedule = schedules["adaptive"]
+    elif finalists["native_deployment_fallback"]:
+        selected_name = "native"
+        selected_schedule = [1.0] * 4
+    else:
+        selected_name = "uniform"
+        selected_schedule = schedules["uniform"]
     additional_valid_rollouts = 2 * (len(records["uniform"]) - 4)
     total_search_rollouts = DISCOVERY_ROLLOUTS + additional_valid_rollouts
     if total_search_rollouts > MAX_SEARCH_ROLLOUTS:
@@ -229,14 +239,16 @@ def run_confirmation(
                 "schedule": schedules[name],
                 "schedule_sha256": v4.schedule_sha256(schedules[name]),
                 "discovery_role": finalists[name]["report"]["role"],
+                "discovery_qualified": bool(finalists[name]["report"].get("qualified")),
             }
-            for name in finalists
+            for name in schedules
         },
         "stages": stages,
         "decision": final_decision,
         "selected_name": selected_name,
-        "selected_schedule": schedules[selected_name],
-        "selected_schedule_sha256": v4.schedule_sha256(schedules[selected_name]),
+        "selected_schedule": selected_schedule,
+        "selected_schedule_sha256": v4.schedule_sha256(selected_schedule),
+        "native_deployment_fallback": finalists["native_deployment_fallback"],
         "discovery_valid_rollouts": DISCOVERY_ROLLOUTS,
         "confirmation_valid_rollouts": additional_valid_rollouts,
         "search_valid_rollouts": total_search_rollouts,

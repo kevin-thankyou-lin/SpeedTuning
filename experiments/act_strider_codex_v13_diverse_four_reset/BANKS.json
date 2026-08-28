@@ -1,0 +1,40 @@
+{
+  "schema": "act-strider-codex-diverse-four-reset-banks-v13",
+  "reset_sampling": "deterministic maximin selection using initial reset pose only",
+  "tasks": {
+    "pick": {
+      "search_primary": {
+        "seeds": [182000035, 182000051, 182000045, 182000040],
+        "panel_receipt": "panels/pick.json"
+      },
+      "search_reserve": {"start": 182001000, "count": 36},
+      "final_primary": {"start": 22300000, "count": 50},
+      "final_reserve": {"start": 22301000, "count": 20}
+    },
+    "tea": {
+      "search_primary": {
+        "seeds": [182000154, 182000144, 182000117, 182000139],
+        "panel_receipt": "panels/tea.json"
+      },
+      "search_reserve": {"start": 182001100, "count": 36},
+      "final_primary": {"start": 22300100, "count": 50},
+      "final_reserve": {"start": 22301100, "count": 20}
+    },
+    "insertion": {
+      "search_primary": {
+        "seeds": [182000257, 182000260, 182000233, 182000236],
+        "panel_receipt": "panels/insertion.json"
+      },
+      "search_reserve": {"start": 182001200, "count": 36},
+      "final_primary": {"start": 22300200, "count": 50},
+      "final_reserve": {"start": 22301200, "count": 20}
+    }
+  },
+  "same_ordered_four_primary_resets_for_every_candidate": true,
+  "pose_selection_uses_policy_outcomes": false,
+  "simulator_invalid_attempts_excluded_and_replaced_from_registered_reserve": true,
+  "all_primary_and_reserve_banks_pairwise_disjoint": true,
+  "disjoint_from_prior_speed_studies": true,
+  "historical_schedule_outcomes_visible_to_search": false,
+  "final_bank_opened_in_this_iteration": false
+}

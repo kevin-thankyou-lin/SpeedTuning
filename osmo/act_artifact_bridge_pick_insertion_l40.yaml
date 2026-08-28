@@ -1,0 +1,41 @@
+version: 2
+workflow:
+  name: speedtuning-act-pick-insertion-artifact-bridge-20260828-v1
+  timeout: {exec_timeout: 6h, queue_timeout: 2h}
+  resources:
+    default: {cpu: 2, gpu: 0, memory: 8Gi, platform: ovx-l40, storage: 8Gi}
+  groups:
+    - name: bridge-group
+      tasks:
+        - name: bridge
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/bridge.sh]
+          files:
+            - path: /tmp/bridge.sh
+              contents: |-
+                set -euo pipefail
+                ROOT=/mnt/amlfs-04/home/linke/speedtuning-original-act
+                OUT=/tmp/strider-act-artifact-bridge
+                mkdir -p "$OUT"
+                for TASK in pick insertion; do
+                  if [ "$TASK" = pick ]; then
+                    RUN=$ROOT/speedtuning-original-act-pick-3pv-wrists-20260824-v1/pick
+                  else
+                    RUN=$ROOT/speedtuning-original-act-insertion-3pv-wrists-20260824-v1/insertion
+                  fi
+                  test -s "$RUN/checkpoints/policy_best.ckpt"
+                  mkdir -p "$OUT/$TASK-act-artifacts/checkpoints"
+                  cp "$RUN/checkpoints/policy_best.ckpt" \
+                     "$RUN/checkpoints/dataset_stats.pkl" \
+                     "$RUN/checkpoints/policy_config.json" \
+                     "$OUT/$TASK-act-artifacts/checkpoints/"
+                  sha256sum "$OUT/$TASK-act-artifacts/checkpoints/"* \
+                    > "$OUT/$TASK-act-artifacts/SHA256SUMS"
+                  tar -C "$OUT" -czf "$OUT/$TASK-act-artifacts.tar.gz" \
+                    "$TASK-act-artifacts"
+                  sha256sum "$OUT/$TASK-act-artifacts.tar.gz"
+                done
+                echo BRIDGE_READY
+                sleep 21600

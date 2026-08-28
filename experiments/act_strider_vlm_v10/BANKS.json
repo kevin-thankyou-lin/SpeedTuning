@@ -1,0 +1,29 @@
+{
+  "schema": "act-strider-vlm-banks-v10",
+  "bank_encoding": "inclusive start followed by consecutive integer seeds",
+  "tasks": {
+    "pick": {
+      "search_primary": {"start": 161000000, "count": 20},
+      "search_reserve": {"start": 161001000, "count": 20},
+      "final_primary": {"start": 20200000, "count": 50},
+      "final_reserve": {"start": 20201000, "count": 20}
+    },
+    "tea": {
+      "search_primary": {"start": 161000100, "count": 20},
+      "search_reserve": {"start": 161001100, "count": 20},
+      "final_primary": {"start": 20200100, "count": 50},
+      "final_reserve": {"start": 20201100, "count": 20}
+    },
+    "insertion": {
+      "search_primary": {"start": 161000200, "count": 20},
+      "search_reserve": {"start": 161001200, "count": 20},
+      "final_primary": {"start": 20200200, "count": 50},
+      "final_reserve": {"start": 20201200, "count": 20}
+    }
+  },
+  "all_primary_and_reserve_banks_pairwise_disjoint": true,
+  "disjoint_from_prior_speed_studies": true,
+  "historical_schedule_outcomes_visible_to_search": false,
+  "final_outcomes_visible_before_selection": false,
+  "simulator_invalid_pairs_replaced_only_from_registered_reserve": true
+}

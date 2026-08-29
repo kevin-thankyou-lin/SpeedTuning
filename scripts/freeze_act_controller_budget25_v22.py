@@ -33,7 +33,13 @@ EXPECTED_RAINBOW_EPISODE25_SHA256 = {
 }
 
 
-def checked_prefix(source_root: Path, seeds: list[int], method: str, task: str) -> tuple[list[dict], dict]:
+def checked_prefix(
+    source_root: Path,
+    seeds: list[int],
+    method: str,
+    task: str,
+    episodes: int = 25,
+) -> tuple[list[dict], dict]:
     complete = json.loads((source_root / "COMPLETE.json").read_text())
     identity = json.loads((source_root / "identity.json").read_text())
     stored_hash = identity.pop("identity_sha256")
@@ -48,7 +54,7 @@ def checked_prefix(source_root: Path, seeds: list[int], method: str, task: str) 
     if json.loads((source_root / "preregistration.json").read_text()) != expected_prereg:
         raise RuntimeError(f"v20 preregistration mismatch for {task}/{method}")
     records = []
-    for seed in seeds[:25]:
+    for seed in seeds[:episodes]:
         path = source_root / "states" / f"{seed}.json"
         record = json.loads(path.read_text())
         if record.get("seed") != seed or record.get("identity_sha256") != stored_hash:

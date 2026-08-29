@@ -164,8 +164,8 @@ def run_confirmation(
     *, runtime, root: Path, finalists: dict, primary_seeds: list[int], reserve_seeds: list[int]
 ) -> dict:
     schedules = {
-        name: list(v4.validate_schedule(item["report"]["schedule"]))
-        for name, item in finalists.items()
+        name: list(v4.validate_schedule(finalists[name]["report"]["schedule"]))
+        for name in ("uniform", "adaptive")
     }
     records = {
         name: initial_records(item, primary_seeds, runtime)

@@ -74,6 +74,7 @@ def test_no_incumbent_uses_native_as_deployment_fallback():
     finalists = v16.choose_finalists({"uniform_incumbent": None}, reports)
     assert finalists["native_deployment_fallback"] is True
     assert finalists["adaptive"]["report"]["schedule"] == [2.0, 1.5, 2.0, 2.0]
+    assert set(v16.controller_finalists(finalists)) == {"uniform", "adaptive"}
 
 
 def test_registered_panels_are_outcome_blind_and_match_banks():

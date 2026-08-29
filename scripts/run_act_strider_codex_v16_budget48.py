@@ -18,6 +18,7 @@ DISCOVERY_ROLLOUTS = 24
 CONFIRMATION_STAGES = ((8, 7), (16, 15))
 MAX_SEARCH_ROLLOUTS = 48
 MIN_THROUGHPUT_GAIN = 0.03
+FINALIST_NAMES = ("uniform", "adaptive")
 
 
 def checked_json(path: Path) -> dict:
@@ -141,6 +142,10 @@ def initial_records(finalist: dict, primary_seeds: list[int], runtime) -> list[d
     return records
 
 
+def controller_finalists(finalists: dict) -> dict:
+    return {name: finalists[name] for name in FINALIST_NAMES}
+
+
 def confirmation_decision(stage: int, summaries: dict[str, dict]) -> str:
     uniform = summaries["uniform"]
     adaptive = summaries["adaptive"]
@@ -163,13 +168,14 @@ def confirmation_decision(stage: int, summaries: dict[str, dict]) -> str:
 def run_confirmation(
     *, runtime, root: Path, finalists: dict, primary_seeds: list[int], reserve_seeds: list[int]
 ) -> dict:
+    controllers = controller_finalists(finalists)
     schedules = {
         name: list(v4.validate_schedule(finalists[name]["report"]["schedule"]))
-        for name in ("uniform", "adaptive")
+        for name in FINALIST_NAMES
     }
     records = {
         name: initial_records(item, primary_seeds, runtime)
-        for name, item in finalists.items()
+        for name, item in controllers.items()
     }
     ledger = base.ValidVideoLedger(runtime, root, [], [])
     extra_pool = primary_seeds[4:] + reserve_seeds

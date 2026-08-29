@@ -1,0 +1,43 @@
+{
+  "schema": "act-speed-benchmark-v1",
+  "study_schema": "act-rl-zero-init-eval-contract-v25",
+  "base_source_commit": "9904705c733124d17c2e0f5c12718377b8893a23",
+  "methods": ["learned_phase_tabular_rl", "learned_phase_rainbow_rl"],
+  "budget": {
+    "training_rollouts_per_method_per_task": 0,
+    "new_training_rollouts": 0,
+    "new_final_rollouts_per_method_per_task": 50,
+    "new_final_rollouts": 300,
+    "cached_v20_v22_v23_v24_rollouts_reexecuted": 0,
+    "physics_error_policy": "count_as_failure_and_continue",
+    "atomic_progress": true,
+    "resume_requires_identity_match": true
+  },
+  "initialization": {
+    "tabular": "all-zero 4x5 Q table; deterministic first-index argmax therefore selects 1x in every phase",
+    "rainbow": "new independently reproducible untrained network; torch manual seed 2701 immediately before construction; zero-one normalization; eval-mode NoisyLinear uses parameter means",
+    "rainbow_torch_seed": 2701,
+    "all_six_controllers_frozen_before_final_bank": true
+  },
+  "tasks": {
+    "pick": {
+      "task": "pick_and_place",
+      "root": "/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs/tasks/pick-act-artifacts",
+      "search_seed_base": 10100000,
+      "final_seed_base": 267000000
+    },
+    "tea": {
+      "task": "tea_bag",
+      "root": "/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs/tasks/tea-act-artifacts",
+      "search_seed_base": 10200000,
+      "final_seed_base": 267000100
+    },
+    "insertion": {
+      "task": "insertion",
+      "root": "/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs/tasks/insertion-act-artifacts",
+      "search_seed_base": 10300000,
+      "final_seed_base": 267000200
+    }
+  },
+  "interpretation": "zero-training initialization control, not a learned RL controller"
+}

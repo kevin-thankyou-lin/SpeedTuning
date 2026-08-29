@@ -116,6 +116,17 @@ def selected_name(
     return "native"
 
 
+def v16_native_deployment_fallback(selection: dict) -> bool:
+    """Read the fallback flag across pre- and post-e55def2 v16 receipts."""
+
+    if "native_deployment_fallback" in selection:
+        return bool(selection["native_deployment_fallback"])
+    selected = selection.get("selected_name")
+    if selected not in {"native", "uniform", "adaptive"}:
+        raise RuntimeError("legacy v16 selection lacks a recognized selected controller")
+    return selected == "native"
+
+
 class RepresentativePoseLedger:
     def __init__(self, runtime, root: Path, panel: dict):
         self.runtime = runtime
@@ -204,7 +215,7 @@ def run_confirmation(runtime, root: Path, selection: dict, panel: dict) -> dict:
         decision,
         final_summaries,
         stage=int(stages[-1]["target_representative_poses_per_finalist"]),
-        native_deployment_fallback=bool(selection["native_deployment_fallback"]),
+        native_deployment_fallback=v16_native_deployment_fallback(selection),
     )
     selected_schedule = [1.0] * 4 if chosen == "native" else schedules[chosen]
     valid_per_finalist = len(records["uniform"])

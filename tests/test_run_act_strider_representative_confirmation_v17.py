@@ -57,6 +57,15 @@ def test_early_rejection_keeps_qualified_uniform_or_native_fallback():
     ) == "native"
 
 
+def test_legacy_v16_fallback_flag_is_derived_from_sealed_selection():
+    assert v17.v16_native_deployment_fallback({"selected_name": "adaptive"}) is False
+    assert v17.v16_native_deployment_fallback({"selected_name": "uniform"}) is False
+    assert v17.v16_native_deployment_fallback({"selected_name": "native"}) is True
+    assert v17.v16_native_deployment_fallback(
+        {"selected_name": "adaptive", "native_deployment_fallback": True}
+    ) is True
+
+
 class FakeRuntime:
     def __init__(self):
         self.calls = 0

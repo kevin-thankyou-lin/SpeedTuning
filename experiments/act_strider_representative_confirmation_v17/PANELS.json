@@ -1,0 +1,14 @@
+{
+  "schema": "act-strider-representative-panel-registry-v17",
+  "tasks": {
+    "pick": "panels/pick.json",
+    "tea": "panels/tea.json",
+    "insertion": "panels/insertion.json"
+  },
+  "assumed_reset_prior": "independent_uniform_over_declared_position_bounds",
+  "stage_prefix_sizes": [4, 8],
+  "selection_uses_policy_outcomes": false,
+  "historical_discovery_rollouts_are_cache_only": true,
+  "opens_final_bank": false
+}
+

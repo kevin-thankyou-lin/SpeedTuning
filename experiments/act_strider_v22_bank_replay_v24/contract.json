@@ -1,0 +1,40 @@
+{
+  "schema": "act-strider-v22-bank-replay-contract-v24",
+  "base_source_commit": "9aa797796ba5dfee7db2a7a4dab73183c04585bd",
+  "budget": {
+    "new_search_rollouts": 0,
+    "new_training_rollouts": 0,
+    "new_final_rollouts": 150,
+    "new_final_rollouts_per_task": 50,
+    "cached_v20_v22_v23_rollouts_reexecuted": 0,
+    "physics_error_policy": "count_as_failure_and_continue"
+  },
+  "tasks": {
+    "pick": {
+      "task": "pick_and_place",
+      "final_seed_base": 267000000,
+      "expected_schedule": [2.5, 1.5, 2.0, 2.0]
+    },
+    "tea": {
+      "task": "tea_bag",
+      "final_seed_base": 267000100,
+      "expected_schedule": [2.0, 2.5, 1.5, 2.0]
+    },
+    "insertion": {
+      "task": "insertion",
+      "final_seed_base": 267000200,
+      "expected_schedule": [2.0, 1.5, 2.0, 2.0]
+    }
+  },
+  "comparators": [
+    "tabular_episode20_v23",
+    "tabular_episode25_v22",
+    "rainbow_episode25_v22"
+  ],
+  "selection": {
+    "schedule_source": "sealed_v18_identity_receipts",
+    "all_three_schedules_frozen_before_final_bank": true,
+    "search_or_tuning_permitted": false,
+    "interpretation": "post_hoc_same_seed_frozen_controller_replay"
+  }
+}

@@ -1,0 +1,72 @@
+version: 2
+default-values:
+  source_commit: REQUIRED_SOURCE_COMMIT
+workflow:
+  name: speedtuning-act-strider-v22-bank-replay-v24
+  timeout: {exec_timeout: 24h, queue_timeout: 12h}
+  resources:
+    default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 48Gi}
+  groups:
+    - name: replay-group
+      tasks:
+        - name: replay
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment: {SOURCE_COMMIT: "{{ source_commit }}"}
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                V20=/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20
+                V22_RUN=/mnt/amlfs-07/shared/linke/speedtuning-act-controller-budget25-eval-v22/runs/d1bcd85c78e306343a173bc18af6773879039915
+                V23_RUN=/mnt/amlfs-07/shared/linke/speedtuning-act-tabular-budget20-eval-v23/runs/315a33143d83e65964980867a5bc341c6fc2dc98
+                INPUT=$V20/inputs
+                RUN=/mnt/amlfs-07/shared/linke/speedtuning-act-strider-v22-bank-replay-v24/runs/$SOURCE_COMMIT
+                CODE=/osmo/run/workspace/SpeedTuning-act-strider-v22-bank-replay-v24
+                OUTPUT=/osmo/data/output/replay
+                CONTRACT=experiments/act_strider_v22_bank_replay_v24/contract.json
+                DETECTOR=$INPUT/detector
+                RECEIPTS=$INPUT/v18_receipts
+                MANIFEST=$RUN/RUN_MANIFEST.json
+                export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 SPEEDTUNING_TORCH_THREADS=2 TOKENIZERS_PARALLELISM=false
+                test "$SOURCE_COMMIT" != REQUIRED_SOURCE_COMMIT
+                test -f "$V22_RUN/COMPLETE.json"
+                test -f "$V23_RUN/COMPLETE.json"
+                for TASK in pick tea insertion; do
+                  test -f "$RECEIPTS/$TASK/IDENTITY.json"
+                  test -f "$RECEIPTS/$TASK/COMPLETE.json"
+                done
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra test
+                .venv/bin/python -m pytest -q \
+                  tests/test_act_strider_v22_bank_replay_v24.py \
+                  tests/test_run_act_strider_representative_final_v18.py \
+                  tests/test_act_controller_budget25_v22.py
+                mkdir -p "$RUN" "$OUTPUT"
+                .venv/bin/python scripts/create_act_strider_v22_bank_replay_v24_manifest.py \
+                  --contract "$CONTRACT" --source-commit "$SOURCE_COMMIT" \
+                  --v18-receipts "$RECEIPTS" --v22-manifest "$V22_RUN/RUN_MANIFEST.json" \
+                  --v22-complete "$V22_RUN/COMPLETE.json" --v23-complete "$V23_RUN/COMPLETE.json" \
+                  --output "$MANIFEST"
+                for TASK in pick tea insertion; do
+                  .venv/bin/python scripts/run_act_strider_v22_bank_replay_v24.py \
+                    --root "$RUN" --source-commit "$SOURCE_COMMIT" --run-manifest "$MANIFEST" \
+                    --v22-manifest "$V22_RUN/RUN_MANIFEST.json" --task-label "$TASK" \
+                    --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                    --detector-source "$DETECTOR/source" --device cuda
+                done
+                .venv/bin/python scripts/finalize_act_strider_v22_bank_replay_v24.py \
+                  --run-manifest "$MANIFEST" --root "$RUN" --v22-root "$V22_RUN" --v23-root "$V23_RUN"
+                test -f "$RUN/COMPLETE.json"
+                cp "$MANIFEST" "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
+                find "$RUN" -name COMPLETE.json -o -name result.json | sort | xargs sha256sum > "$OUTPUT/SHA256SUMS"
+                echo ACT_STRIDER_V22_BANK_REPLAY_V24_COMPLETE source=$SOURCE_COMMIT

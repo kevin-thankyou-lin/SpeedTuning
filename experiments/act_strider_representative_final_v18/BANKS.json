@@ -1,0 +1,23 @@
+{
+  "schema": "act-strider-representative-final-banks-v18",
+  "tasks": {
+    "pick": {
+      "final_primary": {"start": 265000000, "count": 50},
+      "final_reserve": {"start": 265000050, "count": 20}
+    },
+    "tea": {
+      "final_primary": {"start": 265000100, "count": 50},
+      "final_reserve": {"start": 265000150, "count": 20}
+    },
+    "insertion": {
+      "final_primary": {"start": 265000200, "count": 50},
+      "final_reserve": {"start": 265000250, "count": 20}
+    }
+  },
+  "valid_matched_poses_per_task": 50,
+  "controllers": ["native_1x", "uniform_1p5", "strider_v17"],
+  "same_ordered_resets_for_every_controller": true,
+  "selection_frozen_before_bank_opened": true,
+  "disjoint_from_v16_and_v17": true
+}
+

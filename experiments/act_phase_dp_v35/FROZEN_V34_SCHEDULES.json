@@ -1,0 +1,25 @@
+{
+  "schema": "act-v34-phase-only-schedules-frozen-for-v35",
+  "source_workflow": "speedtuning-act-prior-causal-risk-v34-2",
+  "source_implementation_commit": "ccbfef3537bda4a9910a352eeb3ea14eb481b8f1",
+  "tasks": {
+    "pick": {
+      "schedule": [2.5, 2.0, 3.0, 2.0],
+      "source_selection_sha256": "34f1f798b1b73dd5f53642c95cc529eaff202ba5ef720e63fdbf7d50f22cc920",
+      "source_schedule_sha256": "ddff5a6529ae06abd5769e7f351aa88c3dc7efb0300b29a61e96d92c4c9986c8"
+    },
+    "tea": {
+      "schedule": [1.0, 1.0, 1.0, 1.0],
+      "source_selection_sha256": "4bd74b5e6ac8444d52c8bf9dcbdd1c950f29c5255a5941f1b9909bdba61118b8",
+      "source_schedule_sha256": null,
+      "source_selection_status": "no_acceleration_selected_fail_closed_native"
+    },
+    "insertion": {
+      "schedule": [2.5, 1.5, 3.0, 1.0],
+      "source_selection_sha256": "46fe3f48f4483aa55b1313c43cb9d02feec5bc8b4958eb5e713872822947dd66",
+      "source_schedule_sha256": "612a4b24884ffc19ef098d869bf382c22cbd1ee5a0d3dd9520b319747a149e43"
+    }
+  },
+  "historical_outcomes_visible_to_v35_search": false,
+  "historical_rollouts_reexecuted": 0
+}

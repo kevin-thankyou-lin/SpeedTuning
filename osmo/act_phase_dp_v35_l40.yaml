@@ -1,0 +1,76 @@
+version: 2
+default-values:
+  implementation_commit: REQUIRED_IMPLEMENTATION_COMMIT
+  base_source_commit: 8b538d84667520e6cf9e0cce51eaf6f85b910821
+workflow:
+  name: speedtuning-act-phase-dp-v35
+  timeout: {exec_timeout: 12h, queue_timeout: 12h}
+  resources:
+    default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 64Gi}
+  groups:
+    - name: phase-dp-group
+      tasks:
+        - name: phase-dp
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            IMPLEMENTATION_COMMIT: "{{ implementation_commit }}"
+            BASE_SOURCE_COMMIT: "{{ base_source_commit }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                V26=/mnt/amlfs-07/shared/linke/speedtuning-act-common-grid-rl-v26/runs/d890628868666d148b14fc2fa2a55b7d968f6b62
+                INPUT=/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs
+                RUN=/mnt/amlfs-07/shared/linke/speedtuning-act-phase-dp-v35/runs/$IMPLEMENTATION_COMMIT
+                CODE=/osmo/run/workspace/SpeedTuning-act-phase-dp-v35
+                OUTPUT=/osmo/data/output/phase-dp
+                CONTRACT=experiments/act_phase_dp_v35/CONTRACT.md
+                BANKS=experiments/act_phase_dp_v35/BANKS.json
+                DESIGN=experiments/act_phase_dp_v35/DESIGN.json
+                FROZEN_V34=experiments/act_phase_dp_v35/FROZEN_V34_SCHEDULES.json
+                DETECTOR=$INPUT/detector
+                export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
+                export SPEEDTUNING_SPEED_VALUES=1,1.5,2,2.5,3
+                export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 SPEEDTUNING_TORCH_THREADS=2 TOKENIZERS_PARALLELISM=false
+                test "$IMPLEMENTATION_COMMIT" != REQUIRED_IMPLEMENTATION_COMMIT
+                test -f "$V26/COMPLETE.json"
+                test -f "$V26/RUN_MANIFEST.json"
+                test -f "$DETECTOR/rgb_proprio_phase_rn18.pt"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$IMPLEMENTATION_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$IMPLEMENTATION_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra rl --extra test
+                .venv/bin/python -m pytest -q tests/test_act_phase_dp_v35.py tests/test_act_prior_causal_risk_v34.py tests/test_act_common_grid_strider_causal25_v32.py
+                mkdir -p "$RUN" "$OUTPUT"
+                for TASK in pick tea insertion; do
+                  .venv/bin/python scripts/run_act_phase_dp_v35.py \
+                    --stage search --method phase_dp --root "$RUN" \
+                    --base-source-commit "$BASE_SOURCE_COMMIT" --implementation-commit "$IMPLEMENTATION_COMMIT" \
+                    --run-manifest "$V26/RUN_MANIFEST.json" --task-label "$TASK" \
+                    --contract "$CONTRACT" --banks "$BANKS" --design "$DESIGN" --frozen-v34 "$FROZEN_V34" \
+                    --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                    --detector-source "$DETECTOR/source" --device cuda
+                done
+                for TASK in pick tea insertion; do
+                  for METHOD in native_1x v34_phase_only phase_dp; do
+                    .venv/bin/python scripts/run_act_phase_dp_v35.py \
+                      --stage final --method "$METHOD" --root "$RUN" \
+                      --base-source-commit "$BASE_SOURCE_COMMIT" --implementation-commit "$IMPLEMENTATION_COMMIT" \
+                      --run-manifest "$V26/RUN_MANIFEST.json" --task-label "$TASK" \
+                      --contract "$CONTRACT" --banks "$BANKS" --design "$DESIGN" --frozen-v34 "$FROZEN_V34" \
+                      --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                      --detector-source "$DETECTOR/source" --device cuda
+                  done
+                done
+                .venv/bin/python scripts/finalize_act_phase_dp_v35.py \
+                  --root "$RUN" --banks "$BANKS" --design "$DESIGN" --frozen-v34 "$FROZEN_V34"
+                cp "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
+                find "$RUN" -type f \( -name SEARCH_COMPLETE.json -o -name SELECTION.json -o -name IDENTITY.json -o -name COMPLETE.json -o -name RESULT.json \) | sort | xargs sha256sum > "$OUTPUT/SHA256SUMS"
+                echo ACT_PHASE_DP_V35_COMPLETE implementation=$IMPLEMENTATION_COMMIT

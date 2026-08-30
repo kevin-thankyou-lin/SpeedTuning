@@ -1,0 +1,326 @@
+{
+  "final_bank_opened": false,
+  "historical_rollouts_reexecuted": 0,
+  "label": "newly trained SAIL-inspired native precision prior",
+  "offline_training_rollouts": 60,
+  "offline_training_rollouts_per_task": 20,
+  "online_search_rollouts": 0,
+  "paper_faithful_sail": false,
+  "payload_sha256": "4f5a2932a136e2953a803a06da4406d301498923d37e88c43e8b246890fdd8a6",
+  "prior_banks_sha256": "852c1686dc08accd8ae242920db2c237a150e363fe843ad768f49e8da866c913",
+  "schema": "act-new-sail-inspired-offline-priors-v33",
+  "tasks": {
+    "insertion": {
+      "native_rollouts": 20,
+      "native_successes": 20,
+      "phase_prior": {
+        "model": {
+          "alpha": 1.0,
+          "beta": 1.0,
+          "family": "beta_smoothed_phase_bernoulli_precision_head",
+          "phase_logits": [
+            -1.3821875791672371,
+            0.2600768063598923,
+            -1.73175069716375,
+            -3.520460802488973
+          ],
+          "phase_positive_labels": [
+            609,
+            1309,
+            185,
+            14
+          ],
+          "phase_samples": [
+            3038,
+            2318,
+            1235,
+            520
+          ],
+          "positive_labels": 2117,
+          "qpos_scale": [
+            0.15485326437181435,
+            0.5744104643111871,
+            0.22799747101611642,
+            0.2544484269918725,
+            0.18256038353469667,
+            0.37529465770825543,
+            0.2421362163577344,
+            0.16410213641059987,
+            0.5732058638004437,
+            0.23392526369205552,
+            0.2666920744112847,
+            0.18201751504907385,
+            0.3943790385692128,
+            0.27540419131307775
+          ],
+          "samples": 7111,
+          "training_binary_cross_entropy": 0.5196836392334573
+        },
+        "paper_faithful_sail": false,
+        "phase_importance": [
+          0.20065789473684212,
+          0.5646551724137931,
+          0.15036378334680678,
+          0.028735632183908046
+        ],
+        "phase_order": [
+          "pre_grasp",
+          "grasp_lift",
+          "transport",
+          "interaction"
+        ],
+        "precision_target": {
+          "curvature_quantile": 0.75,
+          "curvature_threshold": 0.006091374299952647,
+          "definition": "pre_success_top_quartile_normalized_qpos_curvature_or_gripper_transition",
+          "gripper_delta_threshold": 0.01
+        },
+        "prior_kind": "new_sail_inspired_native_precision_head",
+        "prior_payload_sha256": "9cd4aeab543a8d292b9b5dc41a32619bae346bfd75fb84495dce7d492a813240",
+        "runtime_privileged_signals": false,
+        "schedule": [
+          2.5,
+          1.5,
+          2.5,
+          3.0
+        ],
+        "schema": "act-new-sail-inspired-phase-precision-prior-v33",
+        "speed_mapping": [
+          {
+            "minimum_importance": 0.5,
+            "speed": 1.5
+          },
+          {
+            "minimum_importance": 0.3,
+            "speed": 2.0
+          },
+          {
+            "minimum_importance": 0.15,
+            "speed": 2.5
+          },
+          {
+            "minimum_importance": 0.0,
+            "speed": 3.0
+          }
+        ],
+        "training_rollouts": 20,
+        "training_source": "fresh_disjoint_native_1x_simulation_rollouts"
+      },
+      "physics_errors": 0,
+      "result_payload_sha256": "ba7878236cd3409c224a795fe9a8588660efc0b6d34753e89b574b2b3f07720c",
+      "safety_violations": 0,
+      "schema": "act-new-sail-prior-task-result-v33",
+      "state_receipts_sha256": "01358b8173caff8da0313ce1910d3efb12101fc459b04af70989e065f83369d0",
+      "task_label": "insertion",
+      "training_identity_sha256": "d57495dd6c345134e13d1af2737f1070efc024568364e90a11b2e4cbffb6ddc2"
+    },
+    "pick": {
+      "native_rollouts": 20,
+      "native_successes": 20,
+      "phase_prior": {
+        "model": {
+          "alpha": 1.0,
+          "beta": 1.0,
+          "family": "beta_smoothed_phase_bernoulli_precision_head",
+          "phase_logits": [
+            1.5159540209388531,
+            -0.5403844260075351,
+            -1.3573068242466384,
+            -2.241828883572973
+          ],
+          "phase_positive_labels": [
+            1693,
+            599,
+            139,
+            94
+          ],
+          "phase_samples": [
+            2064,
+            1628,
+            682,
+            987
+          ],
+          "positive_labels": 2525,
+          "qpos_scale": [
+            0.004246657864312806,
+            0.5750476836237708,
+            0.1910837812870338,
+            0.02136287308214359,
+            0.40885970009279354,
+            0.4923238933400549,
+            0.290207104232232,
+            0.11977328853793331,
+            0.5920142091267682,
+            0.42575108167318415,
+            0.15692192266875385,
+            0.2680924838005781,
+            0.250007413547111,
+            0.24259241873603446
+          ],
+          "samples": 5361,
+          "training_binary_cross_entropy": 0.5033392784606997
+        },
+        "paper_faithful_sail": false,
+        "phase_importance": [
+          0.8199419167473379,
+          0.36809815950920244,
+          0.2046783625730994,
+          0.09605662285136501
+        ],
+        "phase_order": [
+          "pre_grasp",
+          "grasp_lift",
+          "transport",
+          "interaction"
+        ],
+        "precision_target": {
+          "curvature_quantile": 0.75,
+          "curvature_threshold": 0.015556914350693486,
+          "definition": "pre_success_top_quartile_normalized_qpos_curvature_or_gripper_transition",
+          "gripper_delta_threshold": 0.01
+        },
+        "prior_kind": "new_sail_inspired_native_precision_head",
+        "prior_payload_sha256": "64f089b997b13fbfa9632cc74b8374c832834db408760fbe73c58ab5ccdad31a",
+        "runtime_privileged_signals": false,
+        "schedule": [
+          1.5,
+          2.0,
+          2.5,
+          3.0
+        ],
+        "schema": "act-new-sail-inspired-phase-precision-prior-v33",
+        "speed_mapping": [
+          {
+            "minimum_importance": 0.5,
+            "speed": 1.5
+          },
+          {
+            "minimum_importance": 0.3,
+            "speed": 2.0
+          },
+          {
+            "minimum_importance": 0.15,
+            "speed": 2.5
+          },
+          {
+            "minimum_importance": 0.0,
+            "speed": 3.0
+          }
+        ],
+        "training_rollouts": 20,
+        "training_source": "fresh_disjoint_native_1x_simulation_rollouts"
+      },
+      "physics_errors": 0,
+      "result_payload_sha256": "f9eb9ea2e7c41645c33d7d76ad957a65d5289cd1f4a12bb1e173dda54d40d68e",
+      "safety_violations": 0,
+      "schema": "act-new-sail-prior-task-result-v33",
+      "state_receipts_sha256": "99687fd8ba74c4d37ef2db182446b662777990387611d1262ddc0b6465bce5dd",
+      "task_label": "pick",
+      "training_identity_sha256": "fe488be4062e147c65642b4add2608054ddab8d432d486d248fc82ad79392c70"
+    },
+    "tea": {
+      "native_rollouts": 20,
+      "native_successes": 20,
+      "phase_prior": {
+        "model": {
+          "alpha": 1.0,
+          "beta": 1.0,
+          "family": "beta_smoothed_phase_bernoulli_precision_head",
+          "phase_logits": [
+            3.787550981620966,
+            -0.15744829204881505,
+            -2.245870531802307,
+            -1.5236858681646501
+          ],
+          "phase_positive_labels": [
+            1191,
+            691,
+            476,
+            201
+          ],
+          "phase_samples": [
+            1217,
+            1500,
+            4982,
+            1127
+          ],
+          "positive_labels": 2559,
+          "qpos_scale": [
+            0.00040112590767513693,
+            0.04326935413839686,
+            0.006425308675491303,
+            0.005554935978137364,
+            0.03415171721048285,
+            0.0006887117741813173,
+            0.0013271041239403094,
+            0.27801932975063887,
+            0.47642040080284387,
+            0.267832341032766,
+            0.4703253828669292,
+            0.34678363766331616,
+            0.5348338337082442,
+            0.16274866249381847
+          ],
+          "samples": 8826,
+          "training_binary_cross_entropy": 0.3693031158598641
+        },
+        "paper_faithful_sail": false,
+        "phase_importance": [
+          0.977850697292863,
+          0.4607190412782956,
+          0.09570626003210272,
+          0.17891939769707707
+        ],
+        "phase_order": [
+          "pre_grasp",
+          "grasp_lift",
+          "transport",
+          "interaction"
+        ],
+        "precision_target": {
+          "curvature_quantile": 0.75,
+          "curvature_threshold": 0.005997131083751034,
+          "definition": "pre_success_top_quartile_normalized_qpos_curvature_or_gripper_transition",
+          "gripper_delta_threshold": 0.01
+        },
+        "prior_kind": "new_sail_inspired_native_precision_head",
+        "prior_payload_sha256": "3d909b7b16cb6f2832764df3fe5de3cf640963fe69e0cfd63be439af59d95677",
+        "runtime_privileged_signals": false,
+        "schedule": [
+          1.5,
+          2.0,
+          3.0,
+          2.5
+        ],
+        "schema": "act-new-sail-inspired-phase-precision-prior-v33",
+        "speed_mapping": [
+          {
+            "minimum_importance": 0.5,
+            "speed": 1.5
+          },
+          {
+            "minimum_importance": 0.3,
+            "speed": 2.0
+          },
+          {
+            "minimum_importance": 0.15,
+            "speed": 2.5
+          },
+          {
+            "minimum_importance": 0.0,
+            "speed": 3.0
+          }
+        ],
+        "training_rollouts": 20,
+        "training_source": "fresh_disjoint_native_1x_simulation_rollouts"
+      },
+      "physics_errors": 0,
+      "result_payload_sha256": "9405f0d06287fbd916810e862c9816506acdd9c0c3347ea8f72687bbfadbb7dd",
+      "safety_violations": 0,
+      "schema": "act-new-sail-prior-task-result-v33",
+      "state_receipts_sha256": "4b109ec4063f3b01218f202bf7384ccd14d38bc1be15e665d2d42e4e0c9e3bd7",
+      "task_label": "tea",
+      "training_identity_sha256": "a0b8c5ca69c420a87a77f1d6391f55a564357c2be029714b69101f31e5ed4c59"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "act-sail-new-prior-training-banks-v33",
+  "rollouts_per_task": 20,
+  "schedule": [1.0, 1.0, 1.0, 1.0],
+  "tasks": {
+    "pick": {"start": 339000000, "count": 20},
+    "tea": {"start": 339001000, "count": 20},
+    "insertion": {"start": 339002000, "count": 20}
+  },
+  "disjoint_from_online_search_and_final_banks": true,
+  "historical_outcomes_visible": false
+}

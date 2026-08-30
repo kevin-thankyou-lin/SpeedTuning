@@ -23,7 +23,6 @@ os.environ.setdefault("SPEEDTUNING_SPEED_VALUES", "1,1.5,2,2.5,3")
 
 from act_speed_benchmark import (  # noqa: E402
     JointEffectorObservationWrapper,
-    build_offline_artifact,
     canonical_sha256,
 )
 from policy_speed_env import create_speed_env, make_speed_reward  # noqa: E402
@@ -125,16 +124,36 @@ def agent_semantic_prior() -> dict:
     return result
 
 
-def build_or_load_prior(runtime: ACTFrontierRuntime, root: Path) -> dict:
-    path = root / "offline" / runtime.task_label / "SAIL_PRIOR.json"
-    artifact = build_offline_artifact(
-        Path(runtime.task_manifest["policy_root"]) / "dataset",
-        "sail_inspired_adaptive",
-    )
-    prior = sail_phase_prior(artifact)
-    value = {"offline_artifact": artifact, "phase_prior": prior}
-    immutable_or_verify(path, value)
-    return value
+def load_trained_prior(path: Path, task: str) -> tuple[dict, dict]:
+    """Load and hash-check the separately charged, newly trained prior."""
+
+    bundle = checked_json(path)
+    claimed = bundle.get("payload_sha256")
+    payload = dict(bundle)
+    payload.pop("payload_sha256", None)
+    if claimed != canonical_sha256(payload):
+        raise RuntimeError(f"v33 trained prior bundle payload hash mismatch: {path}")
+    if bundle.get("schema") != "act-new-sail-inspired-offline-priors-v33":
+        raise RuntimeError("v33 requires the newly trained SAIL-inspired prior schema")
+    if bundle.get("offline_training_rollouts") != 60:
+        raise RuntimeError("v33 newly trained prior must disclose exactly 60 offline rollouts")
+    if bundle.get("online_search_rollouts") != 0 or bundle.get("final_bank_opened") is not False:
+        raise RuntimeError("v33 prior bundle leaked online search or final-bank outcomes")
+    task_result = bundle["tasks"][task]
+    task_claimed = task_result.get("result_payload_sha256")
+    task_payload = dict(task_result)
+    task_payload.pop("result_payload_sha256", None)
+    if task_claimed != canonical_sha256(task_payload):
+        raise RuntimeError(f"v33 trained task-prior payload hash mismatch: {task}")
+    prior = task_result["phase_prior"]
+    prior_claimed = prior.get("prior_payload_sha256")
+    prior_payload = dict(prior)
+    prior_payload.pop("prior_payload_sha256", None)
+    if prior_claimed != canonical_sha256(prior_payload):
+        raise RuntimeError(f"v33 phase-prior payload hash mismatch: {task}")
+    if prior.get("paper_faithful_sail") is not False:
+        raise RuntimeError("v33 prior must retain its SAIL-inspired limitation label")
+    return bundle, prior
 
 
 def sail_ranked_promotions(records: list[dict], schedule: list[float], prior: dict, frozen: set[str]):
@@ -572,6 +591,7 @@ def main() -> int:
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--banks", type=Path, required=True)
     parser.add_argument("--v32-banks", type=Path, required=True)
+    parser.add_argument("--offline-priors", type=Path, required=True)
     parser.add_argument("--detector-checkpoint", type=Path, required=True)
     parser.add_argument("--detector-source", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
@@ -610,9 +630,10 @@ def main() -> int:
     output = root / "search" / args.task_label / args.method
     if args.method == "agent_causal":
         prior = agent_semantic_prior()
+        prior_bundle_sha256 = None
     else:
-        prior_bundle = build_or_load_prior(runtime, root)
-        prior = prior_bundle["phase_prior"]
+        prior_bundle, prior = load_trained_prior(args.offline_priors, args.task_label)
+        prior_bundle_sha256 = file_sha256(args.offline_priors)
     method_bank = spec[args.method]
     if args.method in {"sail_causal", "agent_causal"}:
         discovery = list(map(int, method_bank["discovery"]))
@@ -624,7 +645,9 @@ def main() -> int:
             or len(set(confirmation)) != 5
             or set(discovery) & set(confirmation)
         ):
-            raise RuntimeError("v33 causal search requires three discovery and five confirmation seeds")
+            raise RuntimeError(
+                "v33 causal search requires three discovery and five confirmation seeds"
+            )
         seeds = discovery + confirmation
     else:
         seeds = list(map(int, method_bank))
@@ -640,6 +663,12 @@ def main() -> int:
         "search_seed_bank": method_bank,
         "search_budget": SEARCH_BUDGET,
         "offline_prior_payload_sha256": prior["prior_payload_sha256"],
+        "offline_prior_bundle_sha256": prior_bundle_sha256,
+        "offline_prior_training_rollouts": (
+            0
+            if args.method == "agent_causal"
+            else prior_bundle["offline_training_rollouts"]
+        ),
         "historical_schedule_outcomes_visible": False,
         "final_seeds_registered_unopened": final_seeds,
     }
@@ -661,7 +690,9 @@ def main() -> int:
             args.method,
         )
     else:
-        selection = run_tabular_search(TabularRuntime(runtime), output, identity["identity_sha256"], seeds, prior)
+        selection = run_tabular_search(
+            TabularRuntime(runtime), output, identity["identity_sha256"], seeds, prior
+        )
     immutable_or_verify(selection_path, selection)
     incidents = selection["incident_totals"]
     immutable_json(

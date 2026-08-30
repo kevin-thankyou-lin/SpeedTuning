@@ -28,6 +28,7 @@ workflow:
                 OUTPUT=/osmo/data/output/sail-warmstart
                 CONTRACT=experiments/act_sail_warmstart_v33/CONTRACT.md
                 BANKS=experiments/act_sail_warmstart_v33/BANKS.json
+                PRIORS=experiments/act_sail_warmstart_v33/OFFLINE_PRIORS.json
                 V32_BANKS=experiments/act_common_grid_strider_causal25_v32/BANKS.json
                 DETECTOR=$INPUT/detector
                 export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
@@ -46,6 +47,7 @@ workflow:
                 uv python install 3.10
                 uv sync --frozen --python 3.10 --extra learned --extra imitation --extra rl --extra test
                 .venv/bin/python -m pytest -q tests/test_act_sail_warmstart_v33.py tests/test_act_common_grid_strider_causal25_v32.py
+                test -f "$PRIORS"
                 mkdir -p "$RUN" "$OUTPUT"
                 for TASK in pick tea insertion; do
                   for METHOD in sail_causal sail_tabular agent_causal; do
@@ -53,7 +55,8 @@ workflow:
                       --stage search --method "$METHOD" --root "$RUN" --v32-root "$V32" \
                       --source-commit "$SOURCE_COMMIT" --run-manifest "$V26/RUN_MANIFEST.json" \
                       --task-label "$TASK" --contract "$CONTRACT" --banks "$BANKS" \
-                      --v32-banks "$V32_BANKS" --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                      --v32-banks "$V32_BANKS" --offline-priors "$PRIORS" \
+                      --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
                       --detector-source "$DETECTOR/source" --device cuda
                   done
                 done
@@ -63,11 +66,13 @@ workflow:
                       --stage final --method "$METHOD" --root "$RUN" --v32-root "$V32" \
                       --source-commit "$SOURCE_COMMIT" --run-manifest "$V26/RUN_MANIFEST.json" \
                       --task-label "$TASK" --contract "$CONTRACT" --banks "$BANKS" \
-                      --v32-banks "$V32_BANKS" --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                      --v32-banks "$V32_BANKS" --offline-priors "$PRIORS" \
+                      --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
                       --detector-source "$DETECTOR/source" --device cuda
                   done
                 done
-                .venv/bin/python scripts/finalize_act_sail_warmstart_v33.py --root "$RUN" --v32-banks "$V32_BANKS"
+                .venv/bin/python scripts/finalize_act_sail_warmstart_v33.py \
+                  --root "$RUN" --v32-banks "$V32_BANKS" --offline-priors "$PRIORS"
                 cp "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
                 find "$RUN" -name SEARCH_COMPLETE.json -o -name SELECTION.json -o -name IDENTITY.json -o -name COMPLETE.json -o -name RESULT.json | sort | xargs sha256sum > "$OUTPUT/SHA256SUMS"
                 echo ACT_SAIL_WARMSTART_V33_COMPLETE source=$SOURCE_COMMIT

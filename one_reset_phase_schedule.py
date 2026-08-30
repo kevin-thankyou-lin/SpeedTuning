@@ -234,6 +234,9 @@ def run_phase_schedule(
                     env_state = np.asarray(
                         env.cur_ts.observation["env_state"], dtype=np.float64
                     )
+                    qpos = np.asarray(
+                        env.cur_ts.observation["qpos"], dtype=np.float64
+                    )
                     attribution_telemetry.append(
                         {
                             "physics_step": int(env.physics_steps),
@@ -244,6 +247,11 @@ def run_phase_schedule(
                                 )
                             ],
                             "task_reward": float(0.0 if reward is None else reward),
+                            # This is causal robot state available at the same
+                            # control tick.  V33 uses it only in its separately
+                            # charged offline-prior training bank; no future or
+                            # terminal information is exposed to the controller.
+                            "robot_qpos": [float(value) for value in qpos],
                             "object_positions": [
                                 [
                                     float(value)

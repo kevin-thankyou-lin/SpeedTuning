@@ -63,8 +63,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--v32-banks", type=Path, required=True)
+    parser.add_argument("--offline-priors", type=Path, required=True)
     args = parser.parse_args()
     banks = checked_json(args.v32_banks)
+    offline_priors = checked_json(args.offline_priors)
+    if offline_priors.get("offline_training_rollouts") != 60:
+        raise RuntimeError("v33 finalizer requires the sealed 60-rollout prior bundle")
     search_rollouts = final_rollouts = physics = safety = 0
     tasks = {}
     for task in TASKS:
@@ -110,9 +114,10 @@ def main() -> int:
         "label": "SAIL-inspired prior, not paper-faithful SAIL",
         "tasks": tasks,
         "accounting": {
+            "offline_prior_training_rollouts": offline_priors["offline_training_rollouts"],
             "online_search_rollouts": search_rollouts,
             "online_search_rollouts_per_task_per_method": 25,
-            "offline_prior_rollouts": 0,
+            "offline_prior_rollouts": offline_priors["offline_training_rollouts"],
             "heldout_final_rollouts": final_rollouts,
             "v20_v32_rollouts_reexecuted": 0,
             "physics_errors": physics,

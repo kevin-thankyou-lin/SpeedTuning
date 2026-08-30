@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from act_speed_benchmark import COMMON_GRID_SPEED_VALUES, resolve_speed_values
@@ -37,3 +40,22 @@ def test_fresh_banks_are_sized_and_globally_disjoint():
         banks.extend((search, final))
     for index, bank in enumerate(banks):
         assert all(bank.isdisjoint(other) for other in banks[index + 1 :])
+
+
+def test_entrypoints_import_when_invoked_by_absolute_path(tmp_path):
+    environment = dict(os.environ)
+    environment["SPEEDTUNING_SPEED_VALUES"] = "1,1.5,2,2.5,3"
+    repo = Path(__file__).resolve().parents[1]
+    for name in (
+        "scripts/create_act_common_grid_rl_v26_manifest.py",
+        "scripts/finalize_act_common_grid_rl_v26.py",
+    ):
+        completed = subprocess.run(
+            [sys.executable, str(repo / name), "--help"],
+            cwd=tmp_path,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr

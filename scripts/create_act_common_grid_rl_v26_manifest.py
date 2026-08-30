@@ -6,7 +6,12 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from act_speed_benchmark import SPEED_VALUES, canonical_sha256, sha256
 from scripts.create_act_controller_retrain_v20_manifest import (
@@ -27,7 +32,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
-    repo = Path(__file__).resolve().parents[1]
+    repo = REPO_ROOT
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     if head != args.source_commit:
         raise RuntimeError("manifest source commit mismatch")

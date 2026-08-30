@@ -95,6 +95,32 @@ def test_search_uses_exactly_25_and_only_one_phase_updates(tmp_path):
     assert selection["final_bank_opened"] is False
 
 
+def test_exhausted_causal_phase_repairs_another_accelerated_dimension(tmp_path):
+    class Runtime:
+        def rollout(self, schedule, seed, *, record_attribution_telemetry=False):
+            schedule = list(schedule)
+            native = schedule == [1.0] * 4
+            return record(
+                seed,
+                schedule,
+                success=native,
+                divergent_phase=None if native else "pre_grasp",
+            )
+
+    prior = {
+        "schedule": [2.0, 1.5, 3.0, 1.5],
+        "phase_importance": [0.4, 1.0, 0.1, 1.0],
+    }
+    ledger = module.v32.Ledger(Runtime(), tmp_path, [0, 1, 2], [10, 11, 12, 13, 14])
+    selection = module.run_search(ledger, "tea", prior, {"controller_sha256": "a" * 64})
+    schedules = [item["schedule"] for item in selection["discovery_reports"]]
+    assert len(schedules) == len({tuple(item) for item in schedules}) == 5
+    assert schedules[3] == [1.0, 1.5, 3.0, 1.5]
+    assert sum(left != right for left, right in zip(schedules[3], schedules[4])) == 1
+    assert selection["search_scientific_rollouts"] == ledger.used() == 25
+    assert selection["selected_schedule"] is None
+
+
 def test_banks_are_exact_fresh_and_disjoint():
     banks = json.loads(
         (module.REPO_ROOT / "experiments/act_prior_causal_risk_v34/BANKS.json").read_text()

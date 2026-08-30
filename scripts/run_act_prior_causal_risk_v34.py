@@ -338,7 +338,12 @@ def run_search(ledger: v32.Ledger, task: str, prior: dict, gate_spec: dict) -> d
                     }
                 )
         if proposed is None or v32.schedule_sha256(proposed) in tried:
-            base = incumbent["schedule"]
+            # If causal backoff reaches the grid floor for the attributed
+            # phase, keep repairing the failed schedule rather than jumping
+            # to native.  Native has no accelerated dimensions for
+            # ``sail_guard`` to lower, which previously left an exact-25
+            # search unable to fill its fifth unique discovery slot.
+            base = last["schedule"] if not v32.safe(last) else incumbent["schedule"]
             candidates = v33.sail_guard(base, prior, tried)
             proposed, phase = candidates
             receipts.append(

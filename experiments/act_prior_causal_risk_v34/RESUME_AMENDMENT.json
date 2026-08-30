@@ -1,0 +1,15 @@
+{
+  "allowed_import": "search_state_receipts_only",
+  "failed_workflow": "speedtuning-act-prior-causal-risk-v34-1",
+  "failure": "unique discovery generator jumped to native after causal backoff reached the attributed phase floor",
+  "historical_rollouts_reexecuted": 0,
+  "prior_implementation_commit": "dc1375440a71334715e4b13eb3f76594ac42a1a4",
+  "prior_state_counts": {
+    "insertion": 0,
+    "pick": 25,
+    "tea": 12
+  },
+  "schema": "act-prior-causal-risk-v34-resume-amendment",
+  "scientific_change": "when the attributed phase is already at the grid floor, guard another accelerated dimension of the failed schedule",
+  "source_run": "/mnt/amlfs-07/shared/linke/speedtuning-act-prior-causal-risk-v34/runs/dc1375440a71334715e4b13eb3f76594ac42a1a4"
+}

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import statistics
 import sys
 from pathlib import Path
 
@@ -15,7 +16,46 @@ if str(REPO_ROOT) not in sys.path:
 os.environ.setdefault("SPEEDTUNING_SPEED_VALUES", "1,1.5,2,2.5,3")
 
 from act_speed_benchmark import build_offline_artifact, canonical_sha256, sha256  # noqa: E402
-from scripts.run_act_sail_warmstart_v33 import sail_phase_prior  # noqa: E402
+
+
+PHASES = ("pre_grasp", "grasp_lift", "transport", "interaction")
+GRID = (1.0, 1.5, 2.0, 2.5, 3.0)
+
+
+def nearest_grid(value: float, minimum: float = 1.5) -> float:
+    allowed = [speed for speed in GRID if speed >= minimum]
+    return min(allowed, key=lambda speed: (abs(speed - float(value)), speed))
+
+
+def sail_phase_prior(artifact: dict) -> dict:
+    """Map the registered eight-bin offline profile without simulator imports."""
+
+    source = max(
+        artifact["candidates"], key=lambda item: float(item["maximum_speed"])
+    )
+    profile = list(map(float, source["profile"]))
+    importance = list(map(float, source["importance"]))
+    if len(profile) != 8 or len(importance) != 8:
+        raise RuntimeError("v33 requires the registered eight-bin offline profile")
+    phase_profile = [statistics.fmean(profile[2 * i : 2 * i + 2]) for i in range(4)]
+    phase_importance = [
+        statistics.fmean(importance[2 * i : 2 * i + 2]) for i in range(4)
+    ]
+    result = {
+        "schema": "act-sail-inspired-phase-prior-v33",
+        "prior_kind": "sail_inspired_offline",
+        "paper_faithful_sail": False,
+        "source_artifact_payload_sha256": artifact["artifact_payload_sha256"],
+        "source_candidate_id": source["id"],
+        "mapping": "mean_each_two_of_eight_nominal_time_bins_then_nearest_common_grid",
+        "minimum_phase_speed": 1.5,
+        "phase_order": list(PHASES),
+        "phase_profile": phase_profile,
+        "phase_importance": phase_importance,
+        "schedule": [nearest_grid(value) for value in phase_profile],
+    }
+    result["prior_payload_sha256"] = canonical_sha256(result)
+    return result
 
 
 ROOTS = {

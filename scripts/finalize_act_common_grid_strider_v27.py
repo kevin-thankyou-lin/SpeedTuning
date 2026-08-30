@@ -35,9 +35,11 @@ def immutable_or_equal(path: Path, value: dict) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--study-version", choices=("v27", "v28"), default="v27")
     args = parser.parse_args()
+    search_per_task = 32 if args.study_version == "v27" else 25
     results = {}
-    physics = safety = 0
+    physics = safety = new_final = final_cache_hits = 0
     for task in TASKS:
         task_root = args.root / task
         complete = checked(task_root / "COMPLETE.json")
@@ -47,10 +49,15 @@ def main() -> int:
             raise RuntimeError(f"result hash mismatch: {task}")
         if complete.get("selection_sha256") != sha256(task_root / "SELECTION.json"):
             raise RuntimeError(f"selection hash mismatch: {task}")
-        if complete.get("search_scientific_rollouts") != 32 or complete.get("final_scientific_rollouts") != 50:
+        if complete.get("search_scientific_rollouts") != search_per_task or complete.get("final_scientific_rollouts") != 50:
             raise RuntimeError(f"budget mismatch: {task}")
         physics += int(complete["physics_errors"])
         safety += int(complete["safety_violations"])
+        if args.study_version == "v28":
+            if int(complete.get("new_final_rollouts", -1)) + int(complete.get("final_cache_hits", -1)) != 50:
+                raise RuntimeError(f"final cache accounting mismatch: {task}")
+            new_final += int(complete["new_final_rollouts"])
+            final_cache_hits += int(complete["final_cache_hits"])
         results[task] = {
             "selected_name": selection["selected_name"],
             "selected_schedule": selection["selected_schedule"],
@@ -59,12 +66,15 @@ def main() -> int:
             "summary": result["summary"],
         }
     aggregate = {
-        "schema": "act-common-grid-strider-aggregate-v27",
+        "schema": f"act-common-grid-strider-aggregate-{args.study_version}",
         "tasks": results,
         "accounting": {
-            "search_scientific_rollouts": 96,
+            "search_scientific_rollouts": 3 * search_per_task,
             "final_scientific_rollouts": 150,
+            "new_final_rollouts": new_final if args.study_version == "v28" else 150,
+            "final_cache_hits": final_cache_hits,
             "v20_v26_rollouts_reexecuted": 0,
+            "v27_rollouts_reexecuted": 0,
             "physics_errors": physics,
             "safety_violations": safety,
         },
@@ -72,7 +82,7 @@ def main() -> int:
     result_path = args.root / "RESULT.json"
     immutable_or_equal(result_path, aggregate)
     immutable_or_equal(args.root / "COMPLETE.json", {
-        "schema": "act-common-grid-strider-aggregate-completion-v27",
+        "schema": f"act-common-grid-strider-aggregate-completion-{args.study_version}",
         "result_sha256": sha256(result_path),
         **aggregate["accounting"],
     })

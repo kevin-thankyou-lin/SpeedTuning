@@ -69,9 +69,11 @@ class ACTFrontierRuntime:
         detector_checkpoint: Path,
         detector_source: Path,
         device: str,
+        checkout_commit: str | None = None,
         critical_source_overrides: dict[str, str] | None = None,
     ):
-        if git_head() != source_commit:
+        expected_checkout = checkout_commit or source_commit
+        if git_head() != expected_checkout:
             raise RuntimeError("checked-out source does not match requested commit")
         self.source_commit = source_commit
         self.run_manifest = run_manifest.resolve()

@@ -668,6 +668,7 @@ def main() -> int:
         detector_checkpoint=args.detector_checkpoint,
         detector_source=args.detector_source,
         device=args.device,
+        checkout_commit=implementation_commit,
     )
     root = args.root.resolve()
     if args.stage == "final":

@@ -81,6 +81,54 @@ def test_causal_arm_uses_exactly_25_and_one_phase_updates(tmp_path):
     assert selection["final_bank_opened"] is False
 
 
+def test_causal_arm_spends_exact_budget_on_native_when_base_is_unsafe(tmp_path):
+    class Runtime:
+        def rollout(self, schedule, seed, *, record_attribution_telemetry=False):
+            schedule = list(schedule)
+            success = seed != 0
+            return record(seed, schedule, success, steps=200)
+
+    prior = {
+        "schedule": [2.0, 1.5, 3.0, 1.5],
+        "phase_importance": [0.2, 0.8, 0.1, 0.9],
+    }
+    ledger = module.v32.Ledger(Runtime(), tmp_path, [0, 1, 2], [3, 4, 5, 6, 7])
+    selection = module.run_causal_search(
+        ledger,
+        "insertion",
+        prior,
+        "agent_causal",
+        native_fallback_seeds=list(range(8, 25)),
+        native_fallback_amendment_sha256="a" * 64,
+    )
+    assert selection["selection_status"] == "base_policy_unreliable_no_acceleration"
+    assert selection["selected_schedule"] is None
+    assert selection["search_scientific_rollouts"] == ledger.used() == 25
+    assert selection["native_characterization"]["episodes"] == 25
+    states = list((tmp_path / "states").glob("*/*.json"))
+    assert len(states) == 25
+    assert {tuple(json.loads(path.read_text())["schedule"]) for path in states} == {(1.0,) * 4}
+
+
+def test_no_acceleration_selection_evaluates_native(tmp_path):
+    path = tmp_path / "search" / "tea" / "sail_causal" / "SELECTION.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "selection_status": "no_acceleration_selected",
+                "selected_schedule": None,
+                "selected_schedule_sha256": None,
+            }
+        )
+    )
+    schedule, receipt = module.selected_schedule(
+        tmp_path, tmp_path / "unused-v32", "tea", "sail_causal", "unused"
+    )
+    assert schedule == [1.0] * 4
+    assert receipt == path
+
+
 def test_tabular_q_prior_prefers_sail_schedule_before_updates():
     schedule = [1.5, 2.0, 2.5, 3.0]
     q_values, visits = module.tabular_rebuild([], schedule)
@@ -97,6 +145,9 @@ def test_agent_semantic_prior_is_transport_aggressive_and_contact_conservative()
 
 def test_v33_search_banks_are_exact_and_disjoint():
     banks = json.loads((module.REPO_ROOT / "experiments/act_sail_warmstart_v33/BANKS.json").read_text())
+    fallback = json.loads(
+        (module.REPO_ROOT / "experiments/act_sail_warmstart_v33/NATIVE_FALLBACK_AMENDMENT.json").read_text()
+    )
     seeds = []
     for task in banks["tasks"].values():
         causal = task["sail_causal"]
@@ -110,4 +161,8 @@ def test_v33_search_banks_are_exact_and_disjoint():
             causal["discovery"] + causal["confirmation"]
             + task["sail_tabular"] + agent["discovery"] + agent["confirmation"]
         )
-    assert len(seeds) == len(set(seeds)) == 123
+    for task in fallback["tasks"].values():
+        for method in ("sail_causal", "agent_causal"):
+            assert len(task[method]) == len(set(task[method])) == 17
+            seeds.extend(task[method])
+    assert len(seeds) == len(set(seeds)) == 225

@@ -192,7 +192,15 @@ def sail_guard(schedule: list[float], prior: dict, tried: set[str]):
     return None, None
 
 
-def run_causal_search(ledger: v32.Ledger, task: str, prior: dict, method: str = "sail_causal") -> dict:
+def run_causal_search(
+    ledger: v32.Ledger,
+    task: str,
+    prior: dict,
+    method: str = "sail_causal",
+    *,
+    native_fallback_seeds: list[int] | None = None,
+    native_fallback_amendment_sha256: str | None = None,
+) -> dict:
     reports: list[dict] = []
     records_by_hash: dict[str, list[dict]] = {}
     receipts: list[dict] = []
@@ -206,7 +214,45 @@ def run_causal_search(ledger: v32.Ledger, task: str, prior: dict, method: str = 
 
     native, native_records = evaluate([1.0] * len(PHASES), "native_reference")
     if not v32.safe(native):
-        raise RuntimeError("v33 native reference is not safe 3/3")
+        fallback = list(native_fallback_seeds or ())
+        if len(fallback) != 17 or len(set(fallback)) != 17:
+            raise RuntimeError("v33 unsafe native reference requires 17 registered fallback seeds")
+        if native_fallback_amendment_sha256 is None:
+            raise RuntimeError("v33 unsafe native reference requires a sealed fallback amendment")
+        native_schedule = [1.0] * len(PHASES)
+        characterization = list(native_records)
+        characterization.extend(ledger.one(native_schedule, seed) for seed in ledger.confirmation)
+        characterization.extend(ledger.one(native_schedule, seed) for seed in fallback)
+        if ledger.used() != SEARCH_BUDGET:
+            raise RuntimeError(
+                f"v33 native characterization used {ledger.used()}, expected {SEARCH_BUDGET}"
+            )
+        return {
+            "schema": "act-warmstart-causal25-selection-v33",
+            "method": method,
+            "task_label": task,
+            "offline_prior": prior,
+            "discovery_reports": reports,
+            "update_receipts": [
+                {
+                    "operation": "stop_acceleration_and_characterize_native",
+                    "reason": "native_reference_not_safe_3_of_3",
+                    "observed_native_successes": native["summary"]["successes"],
+                    "registered_native_fallback_seeds": fallback,
+                    "native_fallback_amendment_sha256": native_fallback_amendment_sha256,
+                }
+            ],
+            "frozen_causal_phases": list(PHASES),
+            "finalists": [],
+            "selection_status": "base_policy_unreliable_no_acceleration",
+            "selected_schedule": None,
+            "selected_schedule_sha256": None,
+            "native_characterization": summarize(characterization),
+            "search_scientific_rollouts": ledger.used(),
+            "prior_rollouts_reexecuted": 0,
+            "incident_totals": ledger.incident_totals(),
+            "final_bank_opened": False,
+        }
     last, last_records = evaluate(
         prior["schedule"], f"{prior.get('prior_kind', 'registered')}_warm_start"
     )
@@ -496,6 +542,13 @@ def selected_schedule(root: Path, v32_root: Path, task: str, method: str, v32_ba
     else:
         path = root / "search" / task / method / "SELECTION.json"
     selection = checked_json(path)
+    if selection.get("selected_schedule") is None:
+        if selection.get("selection_status") not in {
+            "no_acceleration_selected",
+            "base_policy_unreliable_no_acceleration",
+        }:
+            raise RuntimeError(f"missing schedule without a fail-closed selection: {path}")
+        return [1.0] * len(PHASES), path
     schedule = list(v30.validate_schedule(selection["selected_schedule"]))
     if v32.schedule_sha256(schedule) != selection["selected_schedule_sha256"]:
         raise RuntimeError(f"selected schedule hash mismatch: {path}")
@@ -586,18 +639,21 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--v32-root", type=Path, required=True)
     parser.add_argument("--source-commit", required=True)
+    parser.add_argument("--implementation-commit")
     parser.add_argument("--run-manifest", type=Path, required=True)
     parser.add_argument("--task-label", choices=TASKS, required=True)
     parser.add_argument("--contract", type=Path, required=True)
     parser.add_argument("--banks", type=Path, required=True)
     parser.add_argument("--v32-banks", type=Path, required=True)
     parser.add_argument("--offline-priors", type=Path, required=True)
+    parser.add_argument("--native-fallback-amendment", type=Path)
     parser.add_argument("--detector-checkpoint", type=Path, required=True)
     parser.add_argument("--detector-source", type=Path, required=True)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
-    if git_head() != args.source_commit:
-        raise RuntimeError("v33 checked-out source differs from requested commit")
+    implementation_commit = args.implementation_commit or args.source_commit
+    if git_head() != implementation_commit:
+        raise RuntimeError("v33 checked-out source differs from implementation commit")
     if args.stage == "search" and args.method not in SEARCH_METHODS:
         raise ValueError("v33 search requires a warm-start method")
     banks = checked_json(args.banks)
@@ -683,11 +739,15 @@ def main() -> int:
         print(json.dumps(checked_json(selection_path), sort_keys=True))
         return 0
     if args.method in {"sail_causal", "agent_causal"}:
+        amendment = checked_json(args.native_fallback_amendment)
+        fallback = amendment["tasks"][args.task_label][args.method]
         selection = run_causal_search(
             v32.Ledger(runtime, output / "ledger", discovery, confirmation),
             args.task_label,
             prior,
             args.method,
+            native_fallback_seeds=list(map(int, fallback)),
+            native_fallback_amendment_sha256=file_sha256(args.native_fallback_amendment),
         )
     else:
         selection = run_tabular_search(

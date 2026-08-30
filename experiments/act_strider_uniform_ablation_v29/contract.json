@@ -1,0 +1,34 @@
+{
+  "schema": "act-strider-uniform-ablation-contract-v29",
+  "study_type": "posthoc_paired_adaptivity_ablation",
+  "source_study": "act-common-grid-strider-v28",
+  "paired_bank": "act-common-grid-rl-v26-final",
+  "action_grid": [1.0, 1.5, 2.0, 2.5, 3.0],
+  "comparisons": {
+    "pick": {
+      "strider_schedule": [2.5, 2.0, 2.0, 2.0],
+      "uniform_schedule": [2.0, 2.0, 2.0, 2.0],
+      "new_rollouts": 50
+    },
+    "tea": {
+      "strider_schedule": [2.0, 2.5, 2.0, 2.0],
+      "uniform_schedule": [2.0, 2.0, 2.0, 2.0],
+      "new_rollouts": 50
+    },
+    "insertion": {
+      "strider_schedule": [1.5, 1.5, 1.5, 1.5],
+      "uniform_schedule": [1.5, 1.5, 1.5, 1.5],
+      "new_rollouts": 0
+    }
+  },
+  "accounting": {
+    "new_rollouts": 100,
+    "v20_v26_v27_v28_rollouts_reexecuted": 0,
+    "insertion_identity_reuse": true
+  },
+  "interpretation": {
+    "uses_already_opened_final_bank": true,
+    "claim": "paired posthoc ablation, not untouched final evaluation",
+    "ranking": "successes first, then achieved throughput per step"
+  }
+}

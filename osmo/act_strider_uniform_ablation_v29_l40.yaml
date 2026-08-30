@@ -1,0 +1,61 @@
+version: 2
+default-values:
+  source_commit: REQUIRED_SOURCE_COMMIT
+workflow:
+  name: speedtuning-act-strider-uniform-ablation-v29
+  timeout: {exec_timeout: 18h, queue_timeout: 12h}
+  resources:
+    default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 48Gi}
+  groups:
+    - name: ablation-group
+      tasks:
+        - name: ablation
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment: {SOURCE_COMMIT: "{{ source_commit }}"}
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                V26=/mnt/amlfs-07/shared/linke/speedtuning-act-common-grid-rl-v26/runs/d890628868666d148b14fc2fa2a55b7d968f6b62
+                V28=/mnt/amlfs-07/shared/linke/speedtuning-act-common-grid-strider-v28/runs/0ce1c72e8a2da5970492708d12e24edc826c0711/tasks
+                INPUT=/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs
+                RUN=/mnt/amlfs-07/shared/linke/speedtuning-act-strider-uniform-ablation-v29/runs/$SOURCE_COMMIT
+                CODE=/osmo/run/workspace/SpeedTuning-act-strider-uniform-ablation-v29
+                OUTPUT=/osmo/data/output/ablation
+                CONTRACT=experiments/act_strider_uniform_ablation_v29/contract.json
+                DETECTOR=$INPUT/detector
+                export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 SPEEDTUNING_TORCH_THREADS=2 TOKENIZERS_PARALLELISM=false
+                test "$SOURCE_COMMIT" != REQUIRED_SOURCE_COMMIT
+                test -f "$V26/COMPLETE.json"
+                test -f "$V26/RUN_MANIFEST.json"
+                test -f "$V28/COMPLETE.json"
+                test -f "$V28/RESULT.json"
+                test -f "$DETECTOR/rgb_proprio_phase_rn18.pt"
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra imitation --extra rl --extra test
+                .venv/bin/python -m pytest -q tests/test_act_strider_uniform_ablation_v29.py
+                mkdir -p "$RUN" "$OUTPUT"
+                for TASK in pick tea; do
+                  .venv/bin/python scripts/run_act_strider_uniform_ablation_v29.py \
+                    --root "$RUN" --source-commit "$SOURCE_COMMIT" \
+                    --contract "$CONTRACT" --v26-root "$V26" --v28-root "$V28" \
+                    --task-label "$TASK" \
+                    --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                    --detector-source "$DETECTOR/source" --device cuda
+                done
+                .venv/bin/python scripts/finalize_act_strider_uniform_ablation_v29.py \
+                  --root "$RUN" --v28-root "$V28"
+                test -f "$RUN/COMPLETE.json"
+                cp "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
+                find "$RUN" -name COMPLETE.json -o -name RESULT.json -o -name IDENTITY.json | sort | xargs sha256sum > "$OUTPUT/SHA256SUMS"
+                echo ACT_STRIDER_UNIFORM_ABLATION_V29_COMPLETE source=$SOURCE_COMMIT

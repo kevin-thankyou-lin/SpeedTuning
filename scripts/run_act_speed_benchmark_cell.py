@@ -256,7 +256,15 @@ def prepare(args):
         temporal_ensemble_m=0.01,
         device=args.device,
     )
-    prereg = None if args.stage == "native" else preregistration(args.method)
+    prereg = (
+        None
+        if args.stage == "native"
+        else preregistration(
+            args.method,
+            search_rollouts=len(task_manifest["search_bank"]["seeds"]),
+            final_rollouts=len(task_manifest["final_bank"]["seeds"]),
+        )
+    )
     return contract, manifest, task, task_manifest, prereg, adapter
 
 
@@ -453,7 +461,7 @@ def run_tabular_search(runtime, output, identity, seeds, records):
         rng.bit_generator.state = records[-1]["rng_state_after"]
     states = output / "states"
     for index, seed in enumerate(seeds[len(records) :], start=len(records)):
-        epsilon = 1.0 + index / 49.0 * (0.05 - 1.0)
+        epsilon = 1.0 + index / max(len(seeds) - 1, 1) * (0.05 - 1.0)
         env = runtime.environment(seed, training=True)
         trajectory = []
         try:
@@ -572,7 +580,9 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
     from rl.rainbowDQN.dqnAgent import DQNAgent
 
     config = runtime.prereg["training"]
-    probe = runtime.environment(seeds[len(records)] if len(records) < 50 else seeds[-1], training=True)
+    probe = runtime.environment(
+        seeds[len(records)] if len(records) < len(seeds) else seeds[-1], training=True
+    )
     try:
         agent = DQNAgent(
             probe,
@@ -670,7 +680,10 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
         "observation_spec": records[-1]["observation_spec"],
         "environment_spec": records[-1]["environment_spec"],
         "observation_encoder_state_dict": None,
-        "metadata": {"terminal_after_exact_search_episodes": 50, "identity_sha256": identity},
+        "metadata": {
+            "terminal_after_exact_search_episodes": len(seeds),
+            "identity_sha256": identity,
+        },
     }
     immutable_torch(terminal, payload)
     selected = {
@@ -684,6 +697,7 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
 
 
 def finish_search(runtime, output, identity, records, selected):
+    expected_episodes = len(runtime.manifest["tasks"][runtime.args.task_label]["search_bank"]["seeds"])
     summary = summarize_rollouts(records)
     summary.update(
         schema="act-speed-search-result-v1", method=runtime.args.method,
@@ -691,12 +705,13 @@ def finish_search(runtime, output, identity, records, selected):
         manifest_path=str(runtime.args.run_manifest),
         policy_checkpoint_sha256=runtime.manifest["tasks"][runtime.args.task_label]["artifacts"]["policy_best.ckpt"],
         selected_path=str(output / "selected.json"), selected_sha256=sha256(output / "selected.json"),
-        states_path=str(output / "states"), exact_budget_complete=len(records) == 50,
+        states_path=str(output / "states"),
+        exact_budget_complete=len(records) == expected_episodes,
     )
     immutable_json(output / "result.json", summary)
     immutable_json(
         output / "COMPLETE.json",
-        {"schema": "act-speed-search-completion-v1", "identity_sha256": identity, "episodes": 50, "result_sha256": sha256(output / "result.json"), "selected_sha256": sha256(output / "selected.json")},
+        {"schema": "act-speed-search-completion-v1", "identity_sha256": identity, "episodes": expected_episodes, "result_sha256": sha256(output / "result.json"), "selected_sha256": sha256(output / "selected.json")},
     )
     return summary
 
@@ -734,7 +749,7 @@ def run_evaluation(runtime, output, identity, seeds, records, policy, selected_p
     summary.update(
         schema="act-speed-final-result-v1" if runtime.args.stage == "final" else "act-speed-native-result-v1",
         method=runtime.args.method, task_label=runtime.args.task_label,
-        identity_sha256=identity, states_path=str(states), exact_budget_complete=len(records) == 50,
+        identity_sha256=identity, states_path=str(states), exact_budget_complete=len(records) == len(seeds),
         manifest_path=str(runtime.args.run_manifest),
         policy_checkpoint_sha256=runtime.manifest["tasks"][runtime.args.task_label]["artifacts"]["policy_best.ckpt"],
     )
@@ -743,7 +758,7 @@ def run_evaluation(runtime, output, identity, seeds, records, policy, selected_p
     immutable_json(output / "result.json", summary)
     immutable_json(
         output / "COMPLETE.json",
-        {"schema": "act-speed-final-completion-v1", "identity_sha256": identity, "episodes": 50, "result_sha256": sha256(output / "result.json")},
+        {"schema": "act-speed-final-completion-v1", "identity_sha256": identity, "episodes": len(seeds), "result_sha256": sha256(output / "result.json")},
     )
     return summary
 
@@ -806,8 +821,8 @@ def main() -> int:
     import_search_receipts(args, output, seeds, identity, prereg)
     records = load_contiguous_states(output / "states", seeds, identity)
     if (output / "COMPLETE.json").exists():
-        if len(records) != 50:
-            raise RuntimeError("completion marker exists without exactly 50 states")
+        if len(records) != len(seeds):
+            raise RuntimeError("completion marker exists without the exact registered bank")
         print(json.dumps(json.loads((output / "result.json").read_text()), sort_keys=True))
         return 0
     runtime = CellRuntime(args, contract, manifest, task, prereg, adapter)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -41,7 +42,22 @@ SWEEP_METHODS = frozenset(
         "sail_inspired_adaptive",
     }
 )
-SPEED_VALUES = (1.0, 1.25, 1.5, 1.75, 2.0)
+LEGACY_SPEED_VALUES = (1.0, 1.25, 1.5, 1.75, 2.0)
+COMMON_GRID_SPEED_VALUES = (1.0, 1.5, 2.0, 2.5, 3.0)
+
+
+def resolve_speed_values(spec: str | None) -> tuple[float, ...]:
+    if spec is None:
+        return LEGACY_SPEED_VALUES
+    values = tuple(float(value) for value in spec.split(","))
+    if values != COMMON_GRID_SPEED_VALUES:
+        raise RuntimeError(
+            "SPEEDTUNING_SPEED_VALUES must be the registered v26 common grid"
+        )
+    return values
+
+
+SPEED_VALUES = resolve_speed_values(os.environ.get("SPEEDTUNING_SPEED_VALUES"))
 PROFILE_BINS = 20
 
 
@@ -111,16 +127,18 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def preregistration(method: str) -> dict:
-    """Return the frozen, task-independent 50-rollout allocation."""
+def preregistration(
+    method: str, *, search_rollouts: int = 50, final_rollouts: int = 50
+) -> dict:
+    """Return the frozen task-independent allocation for one method."""
 
     if method not in METHODS:
         raise ValueError(f"unknown ACT speed method: {method}")
     common = {
         "schema": "act-speed-method-preregistration-v1",
         "method": method,
-        "search_rollouts": 50,
-        "final_rollouts": 50,
+        "search_rollouts": int(search_rollouts),
+        "final_rollouts": int(final_rollouts),
         "speed_values": list(SPEED_VALUES),
         "decision_frame_skip": 10,
         "selection": {
@@ -160,7 +178,7 @@ def preregistration(method: str) -> dict:
         )
     elif method == "learned_phase_tabular_rl":
         common.update(
-            allocation="fifty_sequential_online_training_episodes",
+            allocation=f"{search_rollouts}_sequential_online_training_episodes",
             terminal_artifact_only=True,
             phase_order=list(PHASES),
             decision_mode="fixed_or_phase_entry",
@@ -179,7 +197,7 @@ def preregistration(method: str) -> dict:
         )
     elif method == "learned_phase_rainbow_rl":
         common.update(
-            allocation="fifty_sequential_online_training_episodes",
+            allocation=f"{search_rollouts}_sequential_online_training_episodes",
             terminal_artifact_only=True,
             phase_order=list(PHASES),
             decision_mode="fixed_or_phase_entry",

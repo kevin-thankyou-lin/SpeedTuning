@@ -1,0 +1,57 @@
+{
+  "schema": "act-speed-benchmark-v1",
+  "study_schema": "act-common-grid-rl-contract-v26",
+  "base_source_commit": "f0636edf464fd67564acb00e414a5a1aa6e1e8fc",
+  "action_grid": [1.0, 1.5, 2.0, 2.5, 3.0],
+  "policy_contract": {
+    "cameras": ["angle", "left_wrist", "right_wrist"],
+    "qpos_dim": 15,
+    "action_dim": 14,
+    "action_representation": "absolute_joint_command",
+    "chunk_horizon": 100,
+    "temporal_ensemble_m": 0.01,
+    "progress_clock": "nominal_policy_time"
+  },
+  "learned_phase_detector": {
+    "checkpoint": "/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs/detector/rgb_proprio_phase_rn18.pt",
+    "sha256": "c25c3f530da42eb7c60e5f70405b3a99c56ab72c1e53dfd27055dc3d99c3512d",
+    "inputs": "current angle RGB plus eight causal robot-only proprio samples at stride five",
+    "postprocessing": "raw_argmax"
+  },
+  "methods": ["learned_phase_tabular_rl", "learned_phase_rainbow_rl"],
+  "budget": {
+    "search_rollouts_per_method_per_task": 25,
+    "final_rollouts_per_selected_method_per_task": 50,
+    "new_search_rollouts": 150,
+    "new_final_rollouts": 300,
+    "physics_error_policy": "count_as_failure_and_continue",
+    "atomic_progress": true,
+    "resume_requires_identity_match": true
+  },
+  "tasks": {
+    "pick": {
+      "task": "pick_and_place",
+      "root": "/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs/tasks/pick-act-artifacts",
+      "search_seed_base": 271000000,
+      "final_seed_base": 272000000
+    },
+    "tea": {
+      "task": "tea_bag",
+      "root": "/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs/tasks/tea-act-artifacts",
+      "search_seed_base": 271000100,
+      "final_seed_base": 272000100
+    },
+    "insertion": {
+      "task": "insertion",
+      "root": "/mnt/amlfs-07/shared/linke/speedtuning-act-controller-retrain-v20/inputs/tasks/insertion-act-artifacts",
+      "search_seed_base": 271000200,
+      "final_seed_base": 272000200
+    }
+  },
+  "selection": {
+    "terminal_policy_after_exact_search_bank": true,
+    "all_six_controllers_frozen_before_final_bank": true,
+    "final_bank_is_untouched_until_all_training_cells_complete": true,
+    "prior_v20_v22_v23_v24_v25_rollouts_reused": 0
+  }
+}

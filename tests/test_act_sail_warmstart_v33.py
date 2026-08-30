@@ -37,20 +37,24 @@ def record(seed, schedule, success=True, divergent_phase=None, steps=120):
 
 
 def test_sail_prior_maps_to_accelerated_common_grid():
+    profile = [1.5] * 5 + [2.0] * 5 + [2.5] * 5 + [1.5] * 5
+    importance = [0.9] * 5 + [0.5] * 5 + [0.2] * 5 + [1.0] * 5
     artifact = {
         "artifact_payload_sha256": "a" * 64,
         "candidates": [
             {
                 "id": "max",
                 "maximum_speed": 3.0,
-                "profile": [1.2, 1.6, 2.1, 2.4, 2.6, 2.9, 1.0, 1.1],
-                "importance": [0.9, 0.8, 0.5, 0.4, 0.2, 0.1, 1.0, 0.9],
+                "profile": profile,
+                "importance": importance,
             }
         ],
     }
     prior = module.sail_phase_prior(artifact)
     assert prior["schedule"] == [1.5, 2.0, 2.5, 1.5]
     assert min(prior["schedule"]) == 1.5
+    assert prior["source_profile_bins"] == 20
+    assert prior["bins_per_phase"] == 5
     assert prior["paper_faithful_sail"] is False
 
 

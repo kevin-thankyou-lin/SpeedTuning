@@ -4,12 +4,13 @@ This prospective study uses the frozen ACT policy, learned four-phase detector,
 simulator, success criterion, and common speed grid `[1, 1.5, 2, 2.5, 3]` from
 v26-v32. It does not implement or claim paper-faithful SAIL.
 
-Before any v33 outcome is read, each task's demonstration dataset is hashed and
-the existing offline SAIL-inspired motion-complexity profile is converted from
-eight nominal-time bins to four phase priors. The maximum-speed profile is used;
-each pair of bins is averaged and rounded to the common grid with a `1.5x`
-minimum. Offline demonstrations are disclosed separately and consume no online
-rollout.
+Before any v33 outcome is read, each task reuses the immutable, payload-hashed
+offline SAIL-inspired motion-complexity artifact produced by the audited v1
+benchmark from the same demonstration dataset. Its 20 nominal-time bins are
+converted to four phase priors by averaging each contiguous five-bin block. The
+maximum-speed profile is used and rounded to the common grid with a `1.5x`
+minimum. The source artifact file, payload, dataset-array, and checkpoint hashes
+are pinned separately; this reuse consumes no online rollout.
 
 Three methods receive exactly 25 fresh online adaptation episodes per task:
 

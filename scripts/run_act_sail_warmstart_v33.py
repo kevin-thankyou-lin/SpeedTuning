@@ -23,7 +23,6 @@ os.environ.setdefault("SPEEDTUNING_SPEED_VALUES", "1,1.5,2,2.5,3")
 
 from act_speed_benchmark import (  # noqa: E402
     JointEffectorObservationWrapper,
-    SPEED_VALUES,
     build_offline_artifact,
     canonical_sha256,
 )
@@ -40,7 +39,8 @@ TASKS = ("pick", "tea", "insertion")
 SEARCH_METHODS = ("sail_causal", "sail_tabular", "agent_causal")
 FINAL_METHODS = ("native_1x", "strider_v32", *SEARCH_METHODS)
 PHASES = v32.PHASES
-GRID = v32.GRID
+GRID = (1.0, 1.5, 2.0, 2.5, 3.0)
+SPEED_VALUES = GRID
 SEARCH_BUDGET = 25
 
 
@@ -70,11 +70,18 @@ def sail_phase_prior(artifact: dict) -> dict:
     source = max(candidates, key=lambda item: float(item["maximum_speed"]))
     profile = list(map(float, source["profile"]))
     importance = list(map(float, source["importance"]))
-    if len(profile) != 8 or len(importance) != 8:
-        raise RuntimeError("v33 requires the registered eight-bin offline profile")
-    phase_profile = [statistics.fmean(profile[2 * i : 2 * i + 2]) for i in range(4)]
+    if len(profile) != len(importance) or len(profile) % len(PHASES):
+        raise RuntimeError("offline profile must divide evenly across four phases")
+    bins_per_phase = len(profile) // len(PHASES)
+    phase_profile = [
+        statistics.fmean(profile[bins_per_phase * i : bins_per_phase * (i + 1)])
+        for i in range(len(PHASES))
+    ]
     phase_importance = [
-        statistics.fmean(importance[2 * i : 2 * i + 2]) for i in range(4)
+        statistics.fmean(
+            importance[bins_per_phase * i : bins_per_phase * (i + 1)]
+        )
+        for i in range(len(PHASES))
     ]
     schedule = [nearest_grid(value) for value in phase_profile]
     result = {
@@ -83,7 +90,9 @@ def sail_phase_prior(artifact: dict) -> dict:
         "paper_faithful_sail": False,
         "source_artifact_payload_sha256": artifact["artifact_payload_sha256"],
         "source_candidate_id": source["id"],
-        "mapping": "mean_each_two_of_eight_nominal_time_bins_then_nearest_common_grid",
+        "mapping": "equal_contiguous_nominal_time_bins_to_four_phases_then_nearest_common_grid",
+        "source_profile_bins": len(profile),
+        "bins_per_phase": bins_per_phase,
         "minimum_phase_speed": 1.5,
         "phase_order": list(PHASES),
         "phase_profile": phase_profile,

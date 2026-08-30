@@ -37,7 +37,7 @@ from one_reset_phase_schedule import workspace_violation  # noqa: E402
 from tabular_phase_speed import phase_index  # noqa: E402
 
 TASKS = ("pick", "tea", "insertion")
-SEARCH_METHODS = ("sail_causal", "sail_tabular")
+SEARCH_METHODS = ("sail_causal", "sail_tabular", "agent_causal")
 FINAL_METHODS = ("native_1x", "strider_v32", *SEARCH_METHODS)
 PHASES = v32.PHASES
 GRID = v32.GRID
@@ -79,6 +79,7 @@ def sail_phase_prior(artifact: dict) -> dict:
     schedule = [nearest_grid(value) for value in phase_profile]
     result = {
         "schema": "act-sail-inspired-phase-prior-v33",
+        "prior_kind": "sail_inspired_offline",
         "paper_faithful_sail": False,
         "source_artifact_payload_sha256": artifact["artifact_payload_sha256"],
         "source_candidate_id": source["id"],
@@ -88,6 +89,28 @@ def sail_phase_prior(artifact: dict) -> dict:
         "phase_profile": phase_profile,
         "phase_importance": phase_importance,
         "schedule": schedule,
+    }
+    result["prior_payload_sha256"] = canonical_sha256(result)
+    return result
+
+
+def agent_semantic_prior() -> dict:
+    """Preregister an outcome-blind semantic phase-speed hypothesis."""
+
+    result = {
+        "schema": "act-agent-semantic-phase-prior-v33",
+        "prior_kind": "agent_semantic_contact_aware",
+        "source": "pre_outcome_phase_semantics_only",
+        "historical_schedule_outcomes_visible": False,
+        "phase_order": list(PHASES),
+        "schedule": [2.0, 1.5, 3.0, 1.5],
+        "phase_importance": [0.4, 1.0, 0.1, 1.0],
+        "hypothesis": {
+            "pre_grasp": "moderate_noncontact_approach",
+            "grasp_lift": "conservative_contact_and_load_transfer",
+            "transport": "aggressive_long_stable_motion",
+            "interaction": "conservative_contact_alignment_and_release",
+        },
     }
     result["prior_payload_sha256"] = canonical_sha256(result)
     return result
@@ -141,7 +164,7 @@ def sail_guard(schedule: list[float], prior: dict, tried: set[str]):
     return None, None
 
 
-def run_causal_search(ledger: v32.Ledger, task: str, prior: dict) -> dict:
+def run_causal_search(ledger: v32.Ledger, task: str, prior: dict, method: str = "sail_causal") -> dict:
     reports: list[dict] = []
     records_by_hash: dict[str, list[dict]] = {}
     receipts: list[dict] = []
@@ -156,7 +179,9 @@ def run_causal_search(ledger: v32.Ledger, task: str, prior: dict) -> dict:
     native, native_records = evaluate([1.0] * len(PHASES), "native_reference")
     if not v32.safe(native):
         raise RuntimeError("v33 native reference is not safe 3/3")
-    last, last_records = evaluate(prior["schedule"], "sail_inspired_warm_start")
+    last, last_records = evaluate(
+        prior["schedule"], f"{prior.get('prior_kind', 'registered')}_warm_start"
+    )
 
     while len(reports) < v32.DISCOVERY_SCHEDULES:
         tried = {item["schedule_sha256"] for item in reports}
@@ -192,7 +217,7 @@ def run_causal_search(ledger: v32.Ledger, task: str, prior: dict) -> dict:
                 phase = next(item[2] for item in ranked if item[3] == proposed)
                 receipts.append(
                     {
-                        "operation": "sail_weighted_one_rung_promotion",
+                        "operation": "prior_weighted_one_rung_promotion",
                         "source_schedule": incumbent["schedule"],
                         "proposed_schedule": proposed,
                         "phase": phase,
@@ -206,7 +231,7 @@ def run_causal_search(ledger: v32.Ledger, task: str, prior: dict) -> dict:
             proposed, phase = sail_guard(base["schedule"], prior, tried)
             receipts.append(
                 {
-                    "operation": "sail_importance_one_rung_guard",
+                    "operation": "prior_importance_one_rung_guard",
                     "source_schedule": base["schedule"],
                     "proposed_schedule": proposed,
                     "phase": phase,
@@ -245,7 +270,8 @@ def run_causal_search(ledger: v32.Ledger, task: str, prior: dict) -> dict:
         default=None,
     )
     return {
-        "schema": "act-sail-inspired-causal25-selection-v33",
+        "schema": "act-warmstart-causal25-selection-v33",
+        "method": method,
         "task_label": task,
         "offline_prior": prior,
         "discovery_reports": reports,
@@ -573,10 +599,13 @@ def main() -> int:
         return 0
 
     output = root / "search" / args.task_label / args.method
-    prior_bundle = build_or_load_prior(runtime, root)
-    prior = prior_bundle["phase_prior"]
+    if args.method == "agent_causal":
+        prior = agent_semantic_prior()
+    else:
+        prior_bundle = build_or_load_prior(runtime, root)
+        prior = prior_bundle["phase_prior"]
     method_bank = spec[args.method]
-    if args.method == "sail_causal":
+    if args.method in {"sail_causal", "agent_causal"}:
         discovery = list(map(int, method_bank["discovery"]))
         confirmation = list(map(int, method_bank["confirmation"]))
         if (
@@ -615,11 +644,12 @@ def main() -> int:
             raise RuntimeError("v33 completed selection hash mismatch")
         print(json.dumps(checked_json(selection_path), sort_keys=True))
         return 0
-    if args.method == "sail_causal":
+    if args.method in {"sail_causal", "agent_causal"}:
         selection = run_causal_search(
             v32.Ledger(runtime, output / "ledger", discovery, confirmation),
             args.task_label,
             prior,
+            args.method,
         )
     else:
         selection = run_tabular_search(TabularRuntime(runtime), output, identity["identity_sha256"], seeds, prior)

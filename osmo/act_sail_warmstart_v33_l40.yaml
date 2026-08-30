@@ -48,7 +48,7 @@ workflow:
                 .venv/bin/python -m pytest -q tests/test_act_sail_warmstart_v33.py tests/test_act_common_grid_strider_causal25_v32.py
                 mkdir -p "$RUN" "$OUTPUT"
                 for TASK in pick tea insertion; do
-                  for METHOD in sail_causal sail_tabular; do
+                  for METHOD in sail_causal sail_tabular agent_causal; do
                     .venv/bin/python scripts/run_act_sail_warmstart_v33.py \
                       --stage search --method "$METHOD" --root "$RUN" --v32-root "$V32" \
                       --source-commit "$SOURCE_COMMIT" --run-manifest "$V26/RUN_MANIFEST.json" \
@@ -58,7 +58,7 @@ workflow:
                   done
                 done
                 for TASK in pick tea insertion; do
-                  for METHOD in native_1x strider_v32 sail_causal sail_tabular; do
+                  for METHOD in native_1x strider_v32 sail_causal sail_tabular agent_causal; do
                     .venv/bin/python scripts/run_act_sail_warmstart_v33.py \
                       --stage final --method "$METHOD" --root "$RUN" --v32-root "$V32" \
                       --source-commit "$SOURCE_COMMIT" --run-manifest "$V26/RUN_MANIFEST.json" \

@@ -84,13 +84,26 @@ def test_tabular_q_prior_prefers_sail_schedule_before_updates():
     assert np.count_nonzero(visits) == 0
 
 
+def test_agent_semantic_prior_is_transport_aggressive_and_contact_conservative():
+    prior = module.agent_semantic_prior()
+    assert prior["schedule"] == [2.0, 1.5, 3.0, 1.5]
+    assert prior["phase_importance"][module.PHASES.index("transport")] == 0.1
+    assert prior["historical_schedule_outcomes_visible"] is False
+
+
 def test_v33_search_banks_are_exact_and_disjoint():
     banks = json.loads((module.REPO_ROOT / "experiments/act_sail_warmstart_v33/BANKS.json").read_text())
     seeds = []
     for task in banks["tasks"].values():
         causal = task["sail_causal"]
+        agent = task["agent_causal"]
         assert len(causal["discovery"]) == 3
         assert len(causal["confirmation"]) == 5
+        assert len(agent["discovery"]) == 3
+        assert len(agent["confirmation"]) == 5
         assert len(task["sail_tabular"]) == len(set(task["sail_tabular"])) == 25
-        seeds.extend(causal["discovery"] + causal["confirmation"] + task["sail_tabular"])
-    assert len(seeds) == len(set(seeds)) == 99
+        seeds.extend(
+            causal["discovery"] + causal["confirmation"]
+            + task["sail_tabular"] + agent["discovery"] + agent["confirmation"]
+        )
+    assert len(seeds) == len(set(seeds)) == 123

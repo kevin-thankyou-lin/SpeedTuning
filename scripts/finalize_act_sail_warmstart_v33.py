@@ -101,7 +101,9 @@ def main() -> int:
             comparisons[f"{method}_vs_native_1x"] = paired(records[method], records["native_1x"])
         comparisons["sail_causal_vs_strider_v32"] = paired(records["sail_causal"], records["strider_v32"])
         comparisons["sail_tabular_vs_strider_v32"] = paired(records["sail_tabular"], records["strider_v32"])
+        comparisons["agent_causal_vs_strider_v32"] = paired(records["agent_causal"], records["strider_v32"])
         comparisons["sail_causal_vs_sail_tabular"] = paired(records["sail_causal"], records["sail_tabular"])
+        comparisons["agent_causal_vs_sail_causal"] = paired(records["agent_causal"], records["sail_causal"])
         tasks[task] = {"search": search, "final": finals, "paired": comparisons}
     result = {
         "schema": "act-sail-warmstart-heldout-result-v33",

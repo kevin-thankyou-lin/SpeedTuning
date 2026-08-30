@@ -1,0 +1,23 @@
+{
+  "schema": "act-common-grid-strider-causal25-banks-v32",
+  "tasks": {
+    "pick": {
+      "discovery": {"start": 320000000, "count": 3},
+      "confirmation": {"start": 320000010, "count": 5},
+      "final": {"start": 320001000, "count": 50}
+    },
+    "tea": {
+      "discovery": {"start": 320000100, "count": 3},
+      "confirmation": {"start": 320000110, "count": 5},
+      "final": {"start": 320001100, "count": 50}
+    },
+    "insertion": {
+      "discovery": {"start": 320000200, "count": 3},
+      "confirmation": {"start": 320000210, "count": 5},
+      "final": {"start": 320001200, "count": 50}
+    }
+  },
+  "all_nine_banks_pairwise_disjoint": true,
+  "final_banks_registered_but_unopened": true,
+  "historical_schedule_outcomes_visible_to_search": false
+}

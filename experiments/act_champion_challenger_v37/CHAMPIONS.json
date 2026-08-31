@@ -1,0 +1,62 @@
+{
+  "schema": "act-champion-challenger-offline-incumbents-v37",
+  "historical_speed_outcomes_used_for_initialization": true,
+  "historical_rollouts_reexecuted": 0,
+  "tasks": {
+    "pick": {
+      "champion_schedule": [3.0, 2.0, 3.0, 1.5],
+      "champion_schedule_sha256": "6c330d3836ec985153bbbc186647e5c9965f0ce42b4a1696d7c4b8caf51fde67",
+      "challenger_schedule": [3.0, 2.5, 3.0, 1.5],
+      "challenger_schedule_sha256": "45547b677be161b958f6c00c0099b8790761334cc7e0274aae3bdbd8a4a0bc4a",
+      "proposal_phase": "grasp_lift",
+      "proposal_operation": "one_rung_promotion",
+      "evidence": {
+        "workflow": "speedtuning-act-end-to-end-confirm-v36-1",
+        "partition": "heldout_final",
+        "episodes": 50,
+        "successes": 50,
+        "failure_aware_throughput_per_step": 0.00813140348024069
+      }
+    },
+    "tea": {
+      "champion_schedule": [1.5, 2.5, 2.0, 2.0],
+      "champion_schedule_sha256": "023f8bf0a4d741428c245b0b97aca8939774f8e62b3f26308b84bc583c39ef88",
+      "challenger_schedule": [1.5, 2.5, 2.5, 2.0],
+      "challenger_schedule_sha256": "07c005af8da8429ee4f7bb3f19942f1d33c75912107a67c4084bf9b2ac80af10",
+      "proposal_phase": "transport",
+      "proposal_operation": "one_rung_promotion",
+      "evidence": {
+        "workflow": "speedtuning-act-sail-warmstart-v33-5",
+        "partition": "heldout_final",
+        "episodes": 50,
+        "successes": 47,
+        "failure_aware_throughput_per_step": 0.003983726055263604
+      }
+    },
+    "insertion": {
+      "champion_schedule": [2.5, 1.5, 3.0, 1.0],
+      "champion_schedule_sha256": "612a4b24884ffc19ef098d869bf382c22cbd1ee5a0d3dd9520b319747a149e43",
+      "challenger_schedule": [3.0, 1.5, 3.0, 1.0],
+      "challenger_schedule_sha256": "5529ca7bc0eda7430ca26e5f990244bc2812d2dc30096f18b1d1d098ece5ecfd",
+      "proposal_phase": "pre_grasp",
+      "proposal_operation": "one_rung_promotion",
+      "evidence": {
+        "evaluations": [
+          {
+            "workflow": "speedtuning-act-prior-causal-risk-v34-2",
+            "partition": "heldout_final",
+            "episodes": 50,
+            "successes": 46,
+            "failure_aware_throughput_per_step": 0.004793664026677783
+          },
+          {
+            "workflow": "speedtuning-act-phase-dp-v35-1",
+            "partition": "heldout_final",
+            "episodes": 50,
+            "successes": 48
+          }
+        ]
+      }
+    }
+  }
+}

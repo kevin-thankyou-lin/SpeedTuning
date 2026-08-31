@@ -1,0 +1,27 @@
+{
+  "schema": "act-transport3-boundary-controllers-v38",
+  "historical_speed_outcomes_used_for_initialization": true,
+  "historical_rollouts_reexecuted": 0,
+  "phase_order": ["pre_grasp", "grasp_lift", "transport", "interaction"],
+  "tasks": {
+    "pick": {
+      "champion_schedule": [3.0, 2.0, 3.0, 1.5],
+      "approach_metric": "effector_pair_distance_3d",
+      "approach_threshold": 0.12,
+      "protected_transport_speed": 2.0
+    },
+    "tea": {
+      "champion_schedule": [1.5, 2.5, 2.0, 2.0],
+      "approach_metric": "right_effector_to_fixed_target_xy",
+      "approach_target": [-0.1, 0.6],
+      "approach_threshold": 0.12,
+      "protected_transport_speed": 2.0
+    },
+    "insertion": {
+      "champion_schedule": [2.5, 1.5, 3.0, 1.0],
+      "approach_metric": "effector_pair_distance_3d",
+      "approach_threshold": 0.22,
+      "protected_transport_speed": 2.0
+    }
+  }
+}

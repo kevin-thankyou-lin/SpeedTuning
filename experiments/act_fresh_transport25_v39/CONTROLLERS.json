@@ -1,0 +1,10 @@
+{
+  "schema": "act-fresh-transport25-controllers-v39",
+  "historical_speed_outcomes_used_for_initialization": false,
+  "historical_rollouts_reexecuted": 0,
+  "phase_order": ["pre_grasp", "grasp_lift", "transport", "interaction"],
+  "phase_speed_selector": "learned_phase_detector_argmax",
+  "secondary_speed_override": null,
+  "uniform_2x_schedule": [2.0, 2.0, 2.0, 2.0],
+  "transport_2p5_schedule": [2.0, 2.0, 2.5, 2.0]
+}

@@ -1,0 +1,11 @@
+{
+  "schema": "act-phase-bandit25-controllers-v40",
+  "historical_speed_outcomes_used_for_initialization": false,
+  "historical_rollouts_reexecuted": 0,
+  "phase_order": ["pre_grasp", "grasp_lift", "transport", "interaction"],
+  "phase_speed_selector": "learned_phase_detector_argmax",
+  "secondary_speed_override": null,
+  "uniform_2x_schedule": [2.0, 2.0, 2.0, 2.0],
+  "proposed_phase_speed": 3.0,
+  "proposal_rule": "max_mean_predicted_steps_saved"
+}

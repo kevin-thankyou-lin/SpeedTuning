@@ -7,7 +7,7 @@ workflow:
   timeout:
     exec_timeout: 8h
     queue_timeout: 2h
-  name: speedtuning-scripted-repro-dense500-amlfs01-{{ WORKFLOW_TASK }}-20260901-r2-localstage
+  name: speedtuning-scripted-repro-dense500-amlfs01-{{ WORKFLOW_TASK }}-20260901-r3-objectstage
   resources:
     default:
       cpu: 10
@@ -37,20 +37,15 @@ workflow:
           PERSIST_ROOT=/mnt/amlfs-01/shared/linke/public/speedtuning-repro-20260901/$EXPERIMENT
           FINAL_RUN=$PERSIST_ROOT/$TASK
           RUN=/osmo/run/artifacts/$TASK
-          OSMO_OUTPUT=/osmo/run/outputs/$TASK
+          OSMO_OUTPUT=/osmo/run/outputs
           CODE=/osmo/run/workspace/SpeedTuning-$TASK
-          GEAR_DEST=GearHome/linke/speedtuning/dense500-repro-amlfs01-20260901-r2-localstage/$TASK
+          GEAR_DEST=GearHome/linke/speedtuning/dense500-repro-amlfs01-20260901-r3-objectstage/$TASK
 
           export MUJOCO_GL=egl
           export MPLBACKEND=Agg
           export PYTHONUNBUFFERED=1
 
-          if test -e "$FINAL_RUN"; then
-            echo "refusing to overwrite existing artifact root: $FINAL_RUN" >&2
-            exit 30
-          fi
-          mkdir -p "$RUN/checkpoints" "$RUN/evals/dense_early_curve" "$OSMO_OUTPUT" "$PERSIST_ROOT"
-          chmod 2775 "$PERSIST_ROOT"
+          mkdir -p "$RUN/checkpoints" "$RUN/evals/dense_early_curve" "$OSMO_OUTPUT"
           date --iso-8601=seconds | tee "$RUN/started_at.txt"
           nvidia-smi -L | tee "$RUN/gpus.txt"
 
@@ -208,29 +203,9 @@ workflow:
           PY
 
           date --iso-8601=seconds | tee "$RUN/completed_at.txt"
-          (
-            cd "$RUN"
-            find . -type f ! -name SHA256SUMS -print0 \
-              | sort -z \
-              | xargs -0 sha256sum > SHA256SUMS
-            sha256sum -c SHA256SUMS
-          )
-
-          # Keep a recoverable Osmo object-store copy even if the AMLFS publish
-          # step fails after the long training/evaluation phase.
-          tar -C "$RUN" -cf "$OSMO_OUTPUT/${TASK}_dense500_complete.tar" .
-
-          mkdir "$FINAL_RUN"
-          cp -a "$RUN"/. "$FINAL_RUN"/
-          (
-            cd "$FINAL_RUN"
-            sha256sum -c SHA256SUMS
-          )
-          chmod -R a+rX "$FINAL_RUN"
-
           GEAR_STATUS=not_attempted
           if command -v gear >/dev/null 2>&1; then
-            if gear data upload "$FINAL_RUN" "$GEAR_DEST"; then
+            if gear data upload "$RUN" "$GEAR_DEST"; then
               GEAR_STATUS=uploaded
             else
               GEAR_STATUS=upload_failed
@@ -249,20 +224,34 @@ workflow:
               "artifact_root": os.environ["FINAL_RUN"],
               "gear_destination": os.environ["GEAR_DEST"],
               "gear_status": os.environ["GEAR_STATUS"],
-              "complete": True,
+              "training_and_evaluation_complete": True,
+              "amlfs_publish_status": "deferred_external_due_quota",
+              "complete": False,
           }
-          Path(os.environ["FINAL_RUN"], "terminal_receipt.json").write_text(
+          Path(os.environ["RUN"], "terminal_receipt.json").write_text(
               json.dumps(receipt, indent=2, sort_keys=True) + "\n"
           )
           PY
-          chmod a+r "$FINAL_RUN/terminal_receipt.json"
+          chmod a+r "$RUN/terminal_receipt.json"
+
+          (
+            cd "$RUN"
+            find . -type f ! -name SHA256SUMS -print0 \
+              | sort -z \
+              | xargs -0 sha256sum > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+
+          # Publish at the uploader's top level. AMLFS publication is performed
+          # externally only after quota is reclaimed and this archive verifies.
+          tar -C "$RUN" -czf "$OSMO_OUTPUT/${TASK}_dense500_complete.tar.gz" .
 
           cp "$RUN/started_at.txt" "$RUN/completed_at.txt" "$RUN/gpus.txt" \
             "$RUN/runtime.json" "$RUN/source_commit.txt" "$RUN/pytest.log" \
             "$RUN/contract.json" "$RUN/${TASK}_speed.training.json" \
-            "$RUN/summary.json" "$RUN/SHA256SUMS" "$FINAL_RUN/terminal_receipt.json" \
+            "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/terminal_receipt.json" \
             "$OSMO_OUTPUT"/
           mkdir -p "$OSMO_OUTPUT/evals"
           cp "$RUN/evals/final_seed100_199.json" "$OSMO_OUTPUT/evals"/
-          echo "SPEEDTUNING_DENSE500_COMPLETE task=$TASK root=$FINAL_RUN gear_status=$GEAR_STATUS"
+          echo "SPEEDTUNING_DENSE500_OBJECTSTAGE_COMPLETE task=$TASK final_root=$FINAL_RUN gear_status=$GEAR_STATUS"
           cat "$RUN/summary.json"

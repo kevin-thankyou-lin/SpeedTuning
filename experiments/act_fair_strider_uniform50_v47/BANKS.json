@@ -1,0 +1,24 @@
+{
+  "schema": "act-fair-strider-uniform50-banks-v47",
+  "expansion": {
+    "per_search_arm": "two rounds: diagnostic start+[0,4], paired start+[5,14], diagnostic start+[15,19], paired start+[20,29]",
+    "final": "100 consecutive seeds from final_start"
+  },
+  "tasks": {
+    "pick": {
+      "uniform_search_start": 470000000,
+      "strider_search_start": 470000100,
+      "final_start": 470000200
+    },
+    "tea": {
+      "uniform_search_start": 470001000,
+      "strider_search_start": 470001100,
+      "final_start": 470001200
+    },
+    "insertion": {
+      "uniform_search_start": 470002000,
+      "strider_search_start": 470002100,
+      "final_start": 470002200
+    }
+  }
+}

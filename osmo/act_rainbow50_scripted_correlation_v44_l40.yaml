@@ -32,6 +32,16 @@ workflow:
                   DETECTOR_SOURCE=/mnt/amlfs-04/home/linke/Projects/speedtuning-skill-phase-detector-20260818
                   DETECTOR_CHECKPOINT=$DETECTOR_SOURCE/artifacts/rgb-proprio-rn18-multistride-664e0e7-v2/rgb_proprio_phase_rn18.pt
                 fi
+                if ! test -f "$DETECTOR_CHECKPOINT"; then
+                  DETECTOR_SOURCE=/osmo/run/workspace/detector-upload/source
+                  DETECTOR_CHECKPOINT=/osmo/run/workspace/detector-upload/rgb_proprio_phase_rn18.pt
+                  for _ in $(seq 1 60); do
+                    test -f "$DETECTOR_CHECKPOINT" \
+                      -a -f "$DETECTOR_SOURCE/phase_detector/rgb_inference.py" \
+                      -a -f "$DETECTOR_SOURCE/phase_detector/rgb_proprio.py" && break
+                    sleep 2
+                  done
+                fi
                 RUN=/mnt/amlfs-04/home/linke/speedtuning-act-rainbow50-scripted-correlation-v44/runs/$IMPLEMENTATION_COMMIT
                 CODE=/osmo/run/workspace/SpeedTuning-rainbow50-scripted-correlation-v44
                 OUTPUT=/osmo/data/output/rainbow50-scripted-correlation

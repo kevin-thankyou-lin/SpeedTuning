@@ -1,0 +1,251 @@
+default-values:
+  WORKFLOW_TASK: insertion
+  TASK: insertion
+  PRESET: scripted-insertion
+
+workflow:
+  timeout:
+    exec_timeout: 8h
+    queue_timeout: 2h
+  name: speedtuning-scripted-repro-dense500-amlfs01-{{ WORKFLOW_TASK }}-20260901-r1
+  resources:
+    default:
+      cpu: 10
+      gpu: 1
+      memory: 40Gi
+      platform: ovx-l40
+      storage: 48Gi
+  groups:
+  - name: train
+    tasks:
+    - name: {{ WORKFLOW_TASK }}
+      image: nvcr.io/nvidian/gear-n2-eval:2025.08.31
+      lead: true
+      command: ["bash"]
+      args: ["/tmp/run.sh"]
+      environment:
+        TASK: {{ TASK }}
+        PRESET: {{ PRESET }}
+      files:
+      - path: /tmp/run.sh
+        contents: |
+          set -euo pipefail
+
+          SOURCE_URL=https://github.com/DaivdYuan/SpeedTuning.git
+          SOURCE_COMMIT=b4a4cfcf65502d8b5133dc0899d036bf940a0b7b
+          EXPERIMENT=scripted_reproduction_upstream_b4a4cfc_dense500_independent_3gpu_r1
+          PERSIST_ROOT=/mnt/amlfs-01/shared/linke/public/speedtuning-repro-20260901/$EXPERIMENT
+          RUN=$PERSIST_ROOT/$TASK
+          OSMO_OUTPUT=/osmo/run/outputs/$TASK
+          CODE=/osmo/run/workspace/SpeedTuning-$TASK
+          GEAR_DEST=GearHome/linke/speedtuning/dense500-repro-amlfs01-20260901/$TASK
+
+          export MUJOCO_GL=egl
+          export MPLBACKEND=Agg
+          export PYTHONUNBUFFERED=1
+
+          if test -e "$RUN"; then
+            echo "refusing to overwrite existing artifact root: $RUN" >&2
+            exit 30
+          fi
+          mkdir -p "$RUN/checkpoints" "$RUN/evals/dense_early_curve" "$OSMO_OUTPUT"
+          chmod 2775 "$PERSIST_ROOT" "$RUN" "$RUN/checkpoints" "$RUN/evals" "$RUN/evals/dense_early_curve"
+          date --iso-8601=seconds | tee "$RUN/started_at.txt"
+          nvidia-smi -L | tee "$RUN/gpus.txt"
+
+          git clone "$SOURCE_URL" "$CODE"
+          git -C "$CODE" checkout --detach "$SOURCE_COMMIT"
+          test "$(git -C "$CODE" rev-parse HEAD)" = "$SOURCE_COMMIT"
+          git -C "$CODE" rev-parse HEAD | tee "$RUN/source_commit.txt"
+
+          if ! command -v uv >/dev/null 2>&1; then
+            python -m pip install --no-cache-dir uv==0.9.28
+          fi
+          cd "$CODE"
+          uv python install 3.10
+          uv sync --frozen --python 3.10 --extra rl --extra test --extra evaluation
+          PYTHON=$CODE/.venv/bin/python
+          TRAIN=$CODE/.venv/bin/speedtuning-train-speed
+          EVAL=$CODE/.venv/bin/speedtuning-eval-speed
+
+          export RUN TASK PRESET SOURCE_COMMIT GEAR_DEST
+          "$PYTHON" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          contract = {
+              "schema": "speedtuning-scripted-reproduction-v1",
+              "source_repository": "https://github.com/DaivdYuan/SpeedTuning.git",
+              "source_commit": os.environ["SOURCE_COMMIT"],
+              "task": os.environ["TASK"],
+              "preset": os.environ["PRESET"],
+              "base_policy": "scripted",
+              "base_policy_frozen": True,
+              "training_seed": 0,
+              "training_decisions": 100000,
+              "checkpoint_interval_decisions": 500,
+              "numbered_checkpoint_target": 200,
+              "decision_frame_skip": 10,
+              "dense_early_curve_decisions": list(range(500, 10001, 500)),
+              "evaluation_seeds": "100-199",
+              "evaluation_episodes": 100,
+              "evaluation_role": "benchmark reproduction, not certification",
+              "artifact_root": os.environ["RUN"],
+              "gear_destination": os.environ["GEAR_DEST"],
+          }
+          Path(os.environ["RUN"], "contract.json").write_text(
+              json.dumps(contract, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+
+          "$PYTHON" - <<'PY' | tee "$RUN/runtime.json"
+          import json
+          import torch
+          result = {
+              "cuda_available": torch.cuda.is_available(),
+              "cuda_device_count": torch.cuda.device_count(),
+              "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+              "torch": torch.__version__,
+          }
+          print(json.dumps(result, sort_keys=True))
+          assert result["cuda_available"] and result["cuda_device_count"] == 1, result
+          PY
+
+          "$PYTHON" -m pytest -q | tee "$RUN/pytest.log"
+
+          echo "[train] task=$TASK preset=$PRESET decisions=100000 checkpoint_interval=500 device=cuda"
+          "$TRAIN" \
+            --config "$PRESET" \
+            --task "$TASK" \
+            --seed 0 \
+            --output "$RUN/checkpoints/${TASK}_speed.pt" \
+            --report "$RUN/${TASK}_speed.training.json" \
+            --device cuda \
+            --checkpoint-interval 500 \
+            --quiet \
+            2>&1 | tee "$RUN/train.log"
+
+          checkpoint_count=$(find "$RUN/checkpoints" -maxdepth 1 -name "${TASK}_speed.decision-*.pt" | wc -l)
+          test "$checkpoint_count" -eq 200
+          test -s "$RUN/checkpoints/${TASK}_speed.decision-100000.pt"
+          test -s "$RUN/checkpoints/${TASK}_speed.pt"
+
+          for decision in $(seq 500 500 10000); do
+            echo "[evaluate-early] task=$TASK decision=$decision seeds=100-199"
+            "$EVAL" \
+              --config "$PRESET" \
+              --task "$TASK" \
+              --speed-policy rainbow \
+              --speed-checkpoint "$RUN/checkpoints/${TASK}_speed.decision-${decision}.pt" \
+              --device cuda \
+              --seed 100 \
+              --episodes 100 \
+              > "$RUN/evals/dense_early_curve/checkpoint_${decision}_seed100_199.json"
+          done
+
+          echo "[evaluate-final] task=$TASK seeds=100-199"
+          "$EVAL" \
+            --config "$PRESET" \
+            --task "$TASK" \
+            --speed-policy rainbow \
+            --speed-checkpoint "$RUN/checkpoints/${TASK}_speed.pt" \
+            --device cuda \
+            --seed 100 \
+            --episodes 100 \
+            > "$RUN/evals/final_seed100_199.json"
+
+          "$PYTHON" - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          run = Path(os.environ["RUN"])
+          task = os.environ["TASK"]
+          report = json.loads((run / f"{task}_speed.training.json").read_text())
+          final_lines = (run / "evals/final_seed100_199.json").read_text().splitlines()
+          final_eval = next(json.loads(line) for line in reversed(final_lines) if line.startswith("{"))
+          checkpoints = sorted(
+              run.glob(f"checkpoints/{task}_speed.decision-*.pt"),
+              key=lambda path: int(re.search(r"decision-(\d+)\.pt$", path.name).group(1)),
+          )
+          early_curve = []
+          for path in sorted(
+              (run / "evals/dense_early_curve").glob("checkpoint_*_seed100_199.json"),
+              key=lambda path: int(re.search(r"checkpoint_(\d+)_", path.name).group(1)),
+          ):
+              payload = next(
+                  json.loads(line)
+                  for line in reversed(path.read_text().splitlines())
+                  if line.startswith("{")
+              )
+              early_curve.append({
+                  "decision": int(re.search(r"checkpoint_(\d+)_", path.name).group(1)),
+                  "success_rate": payload["success_rate"],
+                  "successes": payload["successes"],
+                  "episodes": payload["episodes"],
+                  "mean_successful_acceleration": payload["mean_successful_acceleration"],
+              })
+          summary = {
+              "task": task,
+              "preset": os.environ["PRESET"],
+              "source_commit": os.environ["SOURCE_COMMIT"],
+              "training_decisions": report["summary"]["decisions"],
+              "training_episodes": report["summary"]["episodes"],
+              "checkpoint_interval_decisions": 500,
+              "numbered_checkpoint_count": len(checkpoints),
+              "latest_numbered_checkpoint_decision": 100000,
+              "dense_early_curve": early_curve,
+              "final_evaluation": final_eval,
+          }
+          assert summary["training_decisions"] == 100000, summary
+          assert summary["numbered_checkpoint_count"] == 200, summary
+          assert len(summary["dense_early_curve"]) == 20, summary
+          (run / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+          PY
+
+          date --iso-8601=seconds | tee "$RUN/completed_at.txt"
+          find "$RUN" -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > "$RUN/SHA256SUMS"
+          chmod -R a+rX "$RUN"
+
+          GEAR_STATUS=not_attempted
+          if command -v gear >/dev/null 2>&1; then
+            if gear data upload "$RUN" "$GEAR_DEST"; then
+              GEAR_STATUS=uploaded
+            else
+              GEAR_STATUS=upload_failed
+            fi
+          else
+            GEAR_STATUS=gear_cli_unavailable
+          fi
+          export GEAR_STATUS
+          "$PYTHON" - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = {
+              "task": os.environ["TASK"],
+              "artifact_root": os.environ["RUN"],
+              "gear_destination": os.environ["GEAR_DEST"],
+              "gear_status": os.environ["GEAR_STATUS"],
+              "complete": True,
+          }
+          Path(os.environ["RUN"], "terminal_receipt.json").write_text(
+              json.dumps(receipt, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          chmod a+r "$RUN/terminal_receipt.json"
+
+          cp "$RUN/started_at.txt" "$RUN/completed_at.txt" "$RUN/gpus.txt" \
+            "$RUN/runtime.json" "$RUN/source_commit.txt" "$RUN/pytest.log" \
+            "$RUN/contract.json" "$RUN/${TASK}_speed.training.json" \
+            "$RUN/summary.json" "$RUN/SHA256SUMS" "$RUN/terminal_receipt.json" \
+            "$OSMO_OUTPUT"/
+          mkdir -p "$OSMO_OUTPUT/evals"
+          cp "$RUN/evals/final_seed100_199.json" "$OSMO_OUTPUT/evals"/
+          echo "SPEEDTUNING_DENSE500_COMPLETE task=$TASK root=$RUN gear_status=$GEAR_STATUS"
+          cat "$RUN/summary.json"

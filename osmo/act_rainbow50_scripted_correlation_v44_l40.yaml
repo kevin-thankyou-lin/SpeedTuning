@@ -26,6 +26,12 @@ workflow:
                 BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
                 OLD_ROOT=$BENCHMARK/runs/$OLD_SOURCE_COMMIT
                 DETECTOR=$BENCHMARK/frozen_detector
+                DETECTOR_CHECKPOINT=$DETECTOR/rgb_proprio_phase_rn18.pt
+                DETECTOR_SOURCE=$DETECTOR/source
+                if ! test -f "$DETECTOR_CHECKPOINT"; then
+                  DETECTOR_SOURCE=/mnt/amlfs-04/home/linke/Projects/speedtuning-skill-phase-detector-20260818
+                  DETECTOR_CHECKPOINT=$DETECTOR_SOURCE/artifacts/rgb-proprio-rn18-multistride-664e0e7-v2/rgb_proprio_phase_rn18.pt
+                fi
                 RUN=/mnt/amlfs-04/home/linke/speedtuning-act-rainbow50-scripted-correlation-v44/runs/$IMPLEMENTATION_COMMIT
                 CODE=/osmo/run/workspace/SpeedTuning-rainbow50-scripted-correlation-v44
                 OUTPUT=/osmo/data/output/rainbow50-scripted-correlation
@@ -35,7 +41,9 @@ workflow:
                 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 SPEEDTUNING_TORCH_THREADS=2 TOKENIZERS_PARALLELISM=false
                 unset SPEEDTUNING_SPEED_VALUES
                 test "$IMPLEMENTATION_COMMIT" != REQUIRED_IMPLEMENTATION_COMMIT
-                test -f "$DETECTOR/rgb_proprio_phase_rn18.pt"
+                test -f "$DETECTOR_CHECKPOINT"
+                test -f "$DETECTOR_SOURCE/phase_detector/rgb_inference.py"
+                test -f "$DETECTOR_SOURCE/phase_detector/rgb_proprio.py"
                 for TASK in pick tea insertion; do
                   test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/COMPLETE.json"
                   test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/selected.json"
@@ -53,8 +61,8 @@ workflow:
                   --old-root "$OLD_ROOT" --old-source-commit "$OLD_SOURCE_COMMIT" \
                   --output-root "$RUN" --implementation-commit "$IMPLEMENTATION_COMMIT" \
                   --contract "$CONTRACT" --banks "$BANKS" \
-                  --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
-                  --detector-source "$DETECTOR/source" --device cuda
+                  --detector-checkpoint "$DETECTOR_CHECKPOINT" \
+                  --detector-source "$DETECTOR_SOURCE" --device cuda
                 cp "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
                 find "$RUN" -type f \( -name SOURCE_RECEIPT.json -o -name IDENTITY.json -o -name COMPLETE.json -o -name RESULT.json \) | sort | xargs sha256sum > "$OUTPUT/SHA256SUMS"
                 echo ACT_RAINBOW50_SCRIPTED_CORRELATION_V44_COMPLETE implementation=$IMPLEMENTATION_COMMIT

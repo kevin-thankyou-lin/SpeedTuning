@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from collections import deque
 from pathlib import Path
 from time import perf_counter
 from typing import Dict
@@ -48,6 +49,9 @@ class DQNAgent:
         atom_size: int = 121,
         n_step: int = 3,
         n_step_alpha: float = 1.0,
+        lql_trajectory_length: int = 0,
+        lql_lambda_lb: float = 1.0,
+        lql_lambda_ub: float = 1.0,
         hidden_dim: int = 256,
         device=None,
         **legacy_options,
@@ -100,6 +104,23 @@ class DQNAgent:
                 n_step=n_step,
                 gamma=gamma,
             )
+
+        self.lql_trajectory_length = int(lql_trajectory_length)
+        self.lql_lambda_lb = float(lql_lambda_lb)
+        self.lql_lambda_ub = float(lql_lambda_ub)
+        if self.lql_trajectory_length < 0:
+            raise ValueError("lql_trajectory_length must be nonnegative")
+        if self.lql_lambda_lb < 0 or self.lql_lambda_ub < 0:
+            raise ValueError("LQL hinge weights must be nonnegative")
+        self.lql_current_trajectory = []
+        self.lql_trajectories = deque(maxlen=int(memory_size))
+        self.last_update_stats = {
+            "td_loss": 0.0,
+            "lql_lb_loss": 0.0,
+            "lql_ub_loss": 0.0,
+            "lql_lb_active_fraction": 0.0,
+            "lql_ub_active_fraction": 0.0,
+        }
 
         self.v_min = float(v_min)
         self.v_max = float(v_max)
@@ -160,6 +181,19 @@ class DQNAgent:
             if len(self.transition) != 2:
                 raise RuntimeError("Call select_action() before step() while training")
             transition = self.transition + [total_reward, next_state, done]
+            if self.lql_trajectory_length > 0:
+                self.lql_current_trajectory.append(
+                    (
+                        np.asarray(transition[0], dtype=np.float32).copy(),
+                        int(transition[1]),
+                        float(transition[2]),
+                        np.asarray(transition[3], dtype=np.float32).copy(),
+                        bool(transition[4]),
+                    )
+                )
+                if done:
+                    self.lql_trajectories.append(tuple(self.lql_current_trajectory))
+                    self.lql_current_trajectory = []
             if self.use_n_step:
                 one_step_transition = self.memory_n.store(*transition)
             else:
@@ -190,7 +224,13 @@ class DQNAgent:
             elementwise_loss = elementwise_loss + self.n_step_alpha * self._compute_dqn_loss(
                 n_step_samples, self.gamma**self.n_step
             )
-        loss = torch.mean(elementwise_loss * weights)
+        td_loss = torch.mean(elementwise_loss * weights)
+        lql_lb, lql_ub, lql_stats = self._compute_lql_loss()
+        loss = (
+            td_loss
+            + self.lql_lambda_lb * lql_lb
+            + self.lql_lambda_ub * lql_ub
+        )
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -200,7 +240,121 @@ class DQNAgent:
         self.memory.update_priorities(indices, priorities)
         self.dqn.reset_noise()
         self.dqn_target.reset_noise()
+        self.last_update_stats = {
+            "td_loss": float(td_loss.detach().item()),
+            "lql_lb_loss": float(lql_lb.detach().item()),
+            "lql_ub_loss": float(lql_ub.detach().item()),
+            **lql_stats,
+        }
         return float(loss.item())
+
+    def _sample_lql_trajectory(self):
+        """Sample one contiguous, within-episode replay chunk."""
+
+        eligible = [
+            trajectory for trajectory in self.lql_trajectories
+            if len(trajectory) >= 2
+        ]
+        if not eligible:
+            return None
+        trajectory = random.choice(eligible)
+        length = min(self.lql_trajectory_length, len(trajectory))
+        start = random.randint(0, len(trajectory) - length)
+        return trajectory[start : start + length]
+
+    def _compute_lql_loss(self):
+        """Paper-style two-sided n-step inequality penalties.
+
+        Values and rewards are divided by the categorical support width before
+        applying the squared hinge. This is an algebraically equivalent value
+        rescaling that keeps lambda=1 commensurate with Rainbow's categorical
+        cross-entropy rather than an unnormalized squared-return loss.
+        """
+
+        zero = torch.zeros((), dtype=torch.float32, device=self.device)
+        empty_stats = {
+            "lql_lb_active_fraction": 0.0,
+            "lql_ub_active_fraction": 0.0,
+        }
+        if self.lql_trajectory_length <= 0:
+            return zero, zero, empty_stats
+        chunk = self._sample_lql_trajectory()
+        if chunk is None:
+            return zero, zero, empty_stats
+
+        states_np = [transition[0] for transition in chunk]
+        states_np.append(chunk[-1][3])
+        states = torch.as_tensor(
+            np.asarray(states_np), dtype=torch.float32, device=self.device
+        )
+        actions = torch.as_tensor(
+            [transition[1] for transition in chunk],
+            dtype=torch.long,
+            device=self.device,
+        )
+        rewards = torch.as_tensor(
+            [transition[2] for transition in chunk],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        terminal = bool(chunk[-1][4])
+        length = len(chunk)
+        scale = max(self.v_max - self.v_min, 1.0)
+
+        online_logged = self.dqn(states[:-1]).gather(
+            1, actions.unsqueeze(1)
+        ).squeeze(1) / scale
+        with torch.no_grad():
+            greedy = self.dqn(states).argmax(dim=1)
+            target_greedy = self.dqn_target(states).gather(
+                1, greedy.unsqueeze(1)
+            ).squeeze(1) / scale
+            if terminal:
+                target_greedy[-1] = 0.0
+        scaled_rewards = rewards / scale
+
+        # Prefix returns G[i, j] for all 0 <= i <= j <= L.
+        returns = torch.zeros(
+            (length + 1, length + 1),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        for i in range(length):
+            discount = 1.0
+            for j in range(i + 1, length + 1):
+                returns[i, j] = returns[i, j - 1] + discount * scaled_rewards[j - 1]
+                discount *= self.gamma
+
+        lb_violations = []
+        for k in range(length):
+            # Exclude the one-step case, as recommended in the paper.
+            for later in range(k + 2, length + 1):
+                candidate = returns[k, later] + (
+                    self.gamma ** (later - k)
+                ) * target_greedy[later]
+                lb_violations.append(torch.relu(candidate - online_logged[k]))
+
+        ub_violations = []
+        for k in range(1, length):
+            # Include i=k (same-state upper bound) plus earlier states.
+            for earlier in range(0, k + 1):
+                candidate = returns[earlier, k] + (
+                    self.gamma ** (k - earlier)
+                ) * online_logged[k]
+                ub_violations.append(torch.relu(candidate - target_greedy[earlier]))
+
+        def aggregate(values):
+            if not values:
+                return zero, 0.0
+            stacked = torch.stack(values)
+            return stacked.square().mean(), float((stacked > 0).float().mean().item())
+
+        lb_loss, lb_active = aggregate(lb_violations)
+        ub_loss, ub_active = aggregate(ub_violations)
+        return lb_loss, ub_loss, {
+            "lql_lb_active_fraction": lb_active,
+            "lql_ub_active_fraction": ub_active,
+        }
 
     def decay_epsilon(self, step: int):
         if step <= self.hard_exploration_steps:

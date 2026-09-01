@@ -544,6 +544,13 @@ def rainbow_snapshot(agent, decision, update_count, history):
         "optimizer": agent.optimizer.state_dict(),
         "memory": agent.memory.__dict__,
         "memory_n": None if not agent.use_n_step else agent.memory_n.__dict__,
+        "lql_current_trajectory": list(agent.lql_current_trajectory),
+        "lql_trajectories": list(agent.lql_trajectories),
+        "lql_configuration": {
+            "trajectory_length": agent.lql_trajectory_length,
+            "lambda_lb": agent.lql_lambda_lb,
+            "lambda_ub": agent.lql_lambda_ub,
+        },
         "epsilon": agent.epsilon,
         "beta": agent.beta,
         "decision": decision,
@@ -565,6 +572,22 @@ def restore_rainbow(agent, snapshot):
     agent.memory.__dict__.update(snapshot["memory"])
     if agent.use_n_step:
         agent.memory_n.__dict__.update(snapshot["memory_n"])
+    lql_configuration = snapshot.get("lql_configuration")
+    if getattr(agent, "lql_trajectory_length", 0) > 0:
+        expected = {
+            "trajectory_length": agent.lql_trajectory_length,
+            "lambda_lb": agent.lql_lambda_lb,
+            "lambda_ub": agent.lql_lambda_ub,
+        }
+        if lql_configuration != expected:
+            raise RuntimeError("Rainbow LQL resume configuration differs")
+        agent.lql_current_trajectory = list(
+            snapshot.get("lql_current_trajectory", [])
+        )
+        agent.lql_trajectories = deque(
+            snapshot.get("lql_trajectories", []),
+            maxlen=agent.memory.max_size,
+        )
     agent.epsilon = float(snapshot["epsilon"])
     agent.beta = float(snapshot["beta"])
     random.setstate(snapshot["python_rng"])
@@ -600,6 +623,9 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
             alpha=config["per_alpha"], beta=config["per_beta"],
             atom_size=config["atom_size"], v_min=config["v_min"], v_max=config["v_max"],
             n_step=config["n_step"], hidden_dim=config["hidden_dim"], device=runtime.args.device,
+            lql_trajectory_length=config.get("lql_trajectory_length", 0),
+            lql_lambda_lb=config.get("lql_lambda_lb", 1.0),
+            lql_lambda_ub=config.get("lql_lambda_ub", 1.0),
         )
     finally:
         probe.close()
@@ -623,6 +649,7 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
             done = False
             total_reward = 0.0
             losses = []
+            lql_stats = []
             actions = []
             info = {"success": False}
             while not done:
@@ -643,6 +670,7 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
                     agent.dqn_target.update_norm_stats(stats)
                     for _ in range(config["gradient_steps"]):
                         losses.append(agent.update_model())
+                        lql_stats.append(dict(agent.last_update_stats))
                         update_count += 1
                         if update_count % config["target_update"] == 0:
                             agent._target_soft_update()
@@ -658,6 +686,31 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
                 "successful_acceleration": float(env.episode_len / max(physics_steps, 1)) if info["success"] else None,
                 "safety_violation": info.get("safety_violation"), "decision": decision,
                 "update_count": update_count, "epsilon_after": agent.epsilon,
+                "optimizer_diagnostics": {
+                    "updates": len(lql_stats),
+                    "mean_td_loss": (
+                        float(np.mean([item["td_loss"] for item in lql_stats]))
+                        if lql_stats else None
+                    ),
+                    "mean_lql_lb_loss": (
+                        float(np.mean([item["lql_lb_loss"] for item in lql_stats]))
+                        if lql_stats else None
+                    ),
+                    "mean_lql_ub_loss": (
+                        float(np.mean([item["lql_ub_loss"] for item in lql_stats]))
+                        if lql_stats else None
+                    ),
+                    "mean_lql_lb_active_fraction": (
+                        float(np.mean([
+                            item["lql_lb_active_fraction"] for item in lql_stats
+                        ])) if lql_stats else None
+                    ),
+                    "mean_lql_ub_active_fraction": (
+                        float(np.mean([
+                            item["lql_ub_active_fraction"] for item in lql_stats
+                        ])) if lql_stats else None
+                    ),
+                },
                 "loss_last": None if not losses else float(losses[-1]), "actions": actions,
                 "observation_spec": env.observation_spec(), "environment_spec": env.environment_spec(),
             }
@@ -680,7 +733,8 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
     agent.dqn.update_norm_stats(normalization_stats(history))
     terminal = output / "terminal_policy.pt"
     payload = {
-        "format_version": 2, "algorithm": "rainbow_dqn",
+        "format_version": 2,
+        "algorithm": config.get("algorithm", "rainbow_dqn"),
         "model_state_dict": agent.dqn.state_dict(), "observation_dim": int(agent.dqn.in_dim),
         "speed_values": list(SPEED_VALUES), "atom_size": config["atom_size"],
         "v_min": config["v_min"], "v_max": config["v_max"], "hidden_dim": config["hidden_dim"],

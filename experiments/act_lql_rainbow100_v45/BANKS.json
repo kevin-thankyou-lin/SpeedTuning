@@ -1,0 +1,20 @@
+{
+  "schema": "act-lql-rainbow100-banks-v45",
+  "tasks": {
+    "pick": {
+      "training": {"start": 430000010, "count": 100},
+      "probe": {"start": 430000200, "count": 3},
+      "final": {"start": 430000500, "count": 50}
+    },
+    "tea": {
+      "training": {"start": 430001010, "count": 100},
+      "probe": {"start": 430001200, "count": 3},
+      "final": {"start": 430001500, "count": 50}
+    },
+    "insertion": {
+      "training": {"start": 430002010, "count": 100},
+      "probe": {"start": 430002200, "count": 3},
+      "final": {"start": 430002500, "count": 50}
+    }
+  }
+}

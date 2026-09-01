@@ -569,9 +569,15 @@ def restore_rainbow(agent, snapshot):
     agent.beta = float(snapshot["beta"])
     random.setstate(snapshot["python_rng"])
     np.random.set_state(snapshot["numpy_rng"])
-    torch.set_rng_state(snapshot["torch_rng"])
+    # ``map_location=agent_device`` is desirable for model and optimizer state,
+    # but it also moves the process RNG tensors.  PyTorch's RNG setters require
+    # CPU ByteTensors even when the agent itself runs on CUDA.
+    torch.set_rng_state(snapshot["torch_rng"].detach().cpu().to(dtype=torch.uint8))
     if torch.cuda.is_available() and snapshot["cuda_rng"] is not None:
-        torch.cuda.set_rng_state_all(snapshot["cuda_rng"])
+        torch.cuda.set_rng_state_all([
+            state.detach().cpu().to(dtype=torch.uint8)
+            for state in snapshot["cuda_rng"]
+        ])
     return int(snapshot["decision"]), int(snapshot["update_count"]), deque(snapshot["history"], maxlen=4096)
 
 

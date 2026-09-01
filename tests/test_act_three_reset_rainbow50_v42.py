@@ -1,6 +1,11 @@
 import json
+import random
+
+import numpy as np
+import torch
 
 from scripts import run_act_three_reset_rainbow50_v42 as module
+from scripts.run_act_speed_benchmark_cell import restore_rainbow
 
 
 def test_banks_extend_v41_without_reexecuting_parent_rollouts():
@@ -67,3 +72,50 @@ def test_new_prefinal_accounting_is_exact_and_separate_from_parent():
     ).read_text()
     assert "no V41 rollout is re-executed" in contract
     assert "fifty untouched randomized held-out resets" in contract
+
+
+def test_restore_rainbow_normalizes_rng_states_to_cpu_byte_tensors(monkeypatch):
+    class Loadable:
+        def load_state_dict(self, _state):
+            return None
+
+    class Memory:
+        pass
+
+    class Agent:
+        dqn = Loadable()
+        dqn_target = Loadable()
+        optimizer = Loadable()
+        memory = Memory()
+        use_n_step = False
+
+    observed = {}
+    monkeypatch.setattr(torch, "set_rng_state", lambda state: observed.setdefault("cpu", state))
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        torch.cuda,
+        "set_rng_state_all",
+        lambda states: observed.setdefault("cuda", states),
+    )
+    snapshot = {
+        "dqn": {},
+        "target": {},
+        "optimizer": {},
+        "memory": {},
+        "epsilon": 0.5,
+        "beta": 0.4,
+        "python_rng": random.getstate(),
+        "numpy_rng": np.random.get_state(),
+        "torch_rng": torch.arange(4, dtype=torch.int64),
+        "cuda_rng": [torch.arange(3, dtype=torch.int64)],
+        "decision": 17,
+        "update_count": 2,
+        "history": [],
+    }
+
+    restore_rainbow(Agent(), snapshot)
+
+    assert observed["cpu"].device.type == "cpu"
+    assert observed["cpu"].dtype == torch.uint8
+    assert observed["cuda"][0].device.type == "cpu"
+    assert observed["cuda"][0].dtype == torch.uint8

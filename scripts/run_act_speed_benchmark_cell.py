@@ -659,6 +659,9 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
                 record["physics_error"] = str(info["physics_error"])
         finally:
             env.close()
+        validate_record = getattr(runtime, "validate_search_record", None)
+        if validate_record is not None:
+            validate_record(record)
         checkpoint = output / "resume" / f"episode-{episode_index + 1:02d}.pt"
         immutable_torch(checkpoint, rainbow_snapshot(agent, decision, update_count, history))
         record["resume_checkpoint"] = str(checkpoint.relative_to(output))

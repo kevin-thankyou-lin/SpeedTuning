@@ -6,7 +6,7 @@ default-values:
 workflow:
   timeout:
     exec_timeout: 8h
-    queue_timeout: 2h
+    queue_timeout: 8h
   name: speedtuning-scripted-repro-dense500-amlfs01-{{ WORKFLOW_TASK }}-20260901-r3-objectstage
   resources:
     default:

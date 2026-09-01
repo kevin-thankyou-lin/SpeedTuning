@@ -1,0 +1,61 @@
+version: 2
+default-values:
+  implementation_commit: REQUIRED_IMPLEMENTATION_COMMIT
+  old_source_commit: 298c6d16784f228df0b1f455d0e41b4276ec5184
+workflow:
+  name: speedtuning-act-rainbow50-scripted-correlation-v44
+  timeout: {exec_timeout: 6h, queue_timeout: 12h}
+  resources:
+    default: {cpu: 12, gpu: 1, memory: 64Gi, platform: ovx-l40, storage: 32Gi}
+  groups:
+    - name: rainbow50-scripted-correlation-group
+      tasks:
+        - name: rainbow50-scripted-correlation
+          lead: true
+          image: nvcr.io/nvidian/gear-n2-eval:2025.08.31@sha256:b4b30df72cb6024a88b005463fc83c4f7da43ece38f8c8ae77e00f1d31d34fea
+          command: [bash]
+          args: [/tmp/run.sh]
+          environment:
+            IMPLEMENTATION_COMMIT: "{{ implementation_commit }}"
+            OLD_SOURCE_COMMIT: "{{ old_source_commit }}"
+          files:
+            - path: /tmp/run.sh
+              contents: |-
+                set -euo pipefail
+                SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
+                BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
+                OLD_ROOT=$BENCHMARK/runs/$OLD_SOURCE_COMMIT
+                DETECTOR=$BENCHMARK/frozen_detector
+                RUN=/mnt/amlfs-04/home/linke/speedtuning-act-rainbow50-scripted-correlation-v44/runs/$IMPLEMENTATION_COMMIT
+                CODE=/osmo/run/workspace/SpeedTuning-rainbow50-scripted-correlation-v44
+                OUTPUT=/osmo/data/output/rainbow50-scripted-correlation
+                CONTRACT=experiments/act_rainbow50_scripted_correlation_v44/CONTRACT.md
+                BANKS=experiments/act_rainbow50_scripted_correlation_v44/BANKS.json
+                export MUJOCO_GL=egl PYOPENGL_PLATFORM=egl MPLBACKEND=Agg PYTHONUNBUFFERED=1
+                export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 SPEEDTUNING_TORCH_THREADS=2 TOKENIZERS_PARALLELISM=false
+                unset SPEEDTUNING_SPEED_VALUES
+                test "$IMPLEMENTATION_COMMIT" != REQUIRED_IMPLEMENTATION_COMMIT
+                test -f "$DETECTOR/rgb_proprio_phase_rn18.pt"
+                for TASK in pick tea insertion; do
+                  test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/COMPLETE.json"
+                  test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/selected.json"
+                  test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/terminal_policy.pt"
+                done
+                git clone "$SOURCE_URL" "$CODE"
+                git -C "$CODE" checkout --detach "$IMPLEMENTATION_COMMIT"
+                test "$(git -C "$CODE" rev-parse HEAD)" = "$IMPLEMENTATION_COMMIT"
+                cd "$CODE"
+                command -v uv >/dev/null || python -m pip install --no-cache-dir uv==0.9.28
+                uv python install 3.10
+                uv sync --frozen --python 3.10 --extra learned --extra rl --extra test
+                .venv/bin/python -m pytest -q tests/test_act_rainbow50_scripted_correlation_v44.py tests/test_act_speed_benchmark_runner.py tests/test_act_randomized_rainbow100_v43.py
+                mkdir -p "$RUN" "$OUTPUT"
+                .venv/bin/python scripts/run_act_rainbow50_scripted_correlation_v44.py \
+                  --old-root "$OLD_ROOT" --old-source-commit "$OLD_SOURCE_COMMIT" \
+                  --output-root "$RUN" --implementation-commit "$IMPLEMENTATION_COMMIT" \
+                  --contract "$CONTRACT" --banks "$BANKS" \
+                  --detector-checkpoint "$DETECTOR/rgb_proprio_phase_rn18.pt" \
+                  --detector-source "$DETECTOR/source" --device cuda
+                cp "$RUN/RESULT.json" "$RUN/COMPLETE.json" "$OUTPUT/"
+                find "$RUN" -type f \( -name SOURCE_RECEIPT.json -o -name IDENTITY.json -o -name COMPLETE.json -o -name RESULT.json \) | sort | xargs sha256sum > "$OUTPUT/SHA256SUMS"
+                echo ACT_RAINBOW50_SCRIPTED_CORRELATION_V44_COMPLETE implementation=$IMPLEMENTATION_COMMIT

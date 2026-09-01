@@ -1,0 +1,10 @@
+{
+  "schema": "act-rainbow50-scripted-correlation-banks-v44",
+  "episodes_per_method": 10,
+  "methods": ["native_1x", "frozen_rainbow50"],
+  "tasks": {
+    "pick": {"start": 440000500, "count": 10},
+    "tea": {"start": 440001500, "count": 10},
+    "insertion": {"start": 440002500, "count": 10}
+  }
+}

@@ -551,6 +551,23 @@ def rainbow_snapshot(agent, decision, update_count, history):
             "lambda_lb": agent.lql_lambda_lb,
             "lambda_ub": agent.lql_lambda_ub,
         },
+        "adjacent_success_current_trajectory": list(
+            agent.adjacent_success_current_trajectory
+        ),
+        "adjacent_success_trajectories": list(
+            agent.adjacent_success_trajectories
+        ),
+        "adjacent_success_configuration": {
+            "trajectory_length": agent.adjacent_success_trajectory_length,
+            "lambda": agent.adjacent_success_lambda,
+        },
+        "adjacent_success_counters": {
+            "successful_episodes_seen": (
+                agent.adjacent_success_successful_episodes_seen
+            ),
+            "accepted_episodes": agent.adjacent_success_accepted_episodes,
+            "rejected_regression": agent.adjacent_success_rejected_regression,
+        },
         "epsilon": agent.epsilon,
         "beta": agent.beta,
         "decision": decision,
@@ -587,6 +604,33 @@ def restore_rainbow(agent, snapshot):
         agent.lql_trajectories = deque(
             snapshot.get("lql_trajectories", []),
             maxlen=agent.memory.max_size,
+        )
+    adjacent_configuration = snapshot.get("adjacent_success_configuration")
+    if getattr(agent, "adjacent_success_trajectory_length", 0) > 0:
+        expected = {
+            "trajectory_length": agent.adjacent_success_trajectory_length,
+            "lambda": agent.adjacent_success_lambda,
+        }
+        if adjacent_configuration != expected:
+            raise RuntimeError(
+                "Rainbow adjacent-success resume configuration differs"
+            )
+        agent.adjacent_success_current_trajectory = list(
+            snapshot.get("adjacent_success_current_trajectory", [])
+        )
+        agent.adjacent_success_trajectories = deque(
+            snapshot.get("adjacent_success_trajectories", []),
+            maxlen=agent.memory.max_size,
+        )
+        counters = snapshot.get("adjacent_success_counters", {})
+        agent.adjacent_success_successful_episodes_seen = int(
+            counters.get("successful_episodes_seen", 0)
+        )
+        agent.adjacent_success_accepted_episodes = int(
+            counters.get("accepted_episodes", 0)
+        )
+        agent.adjacent_success_rejected_regression = int(
+            counters.get("rejected_regression", 0)
         )
     agent.epsilon = float(snapshot["epsilon"])
     agent.beta = float(snapshot["beta"])
@@ -626,6 +670,10 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
             lql_trajectory_length=config.get("lql_trajectory_length", 0),
             lql_lambda_lb=config.get("lql_lambda_lb", 1.0),
             lql_lambda_ub=config.get("lql_lambda_ub", 1.0),
+            adjacent_success_trajectory_length=config.get(
+                "adjacent_success_trajectory_length", 0
+            ),
+            adjacent_success_lambda=config.get("adjacent_success_lambda", 1.0),
         )
     finally:
         probe.close()
@@ -709,6 +757,30 @@ def run_rainbow_search(runtime, output, identity, seeds, records):
                         float(np.mean([
                             item["lql_ub_active_fraction"] for item in lql_stats
                         ])) if lql_stats else None
+                    ),
+                    "mean_adjacent_success_loss": (
+                        float(np.mean([
+                            item["adjacent_success_loss"] for item in lql_stats
+                        ])) if lql_stats else None
+                    ),
+                    "mean_adjacent_success_active_fraction": (
+                        float(np.mean([
+                            item["adjacent_success_active_fraction"]
+                            for item in lql_stats
+                        ])) if lql_stats else None
+                    ),
+                    "adjacent_success_comparisons": sum(
+                        int(item["adjacent_success_comparisons"])
+                        for item in lql_stats
+                    ),
+                    "adjacent_success_successful_episodes_seen": (
+                        agent.adjacent_success_successful_episodes_seen
+                    ),
+                    "adjacent_success_accepted_episodes": (
+                        agent.adjacent_success_accepted_episodes
+                    ),
+                    "adjacent_success_rejected_regression": (
+                        agent.adjacent_success_rejected_regression
                     ),
                 },
                 "loss_last": None if not losses else float(losses[-1]), "actions": actions,

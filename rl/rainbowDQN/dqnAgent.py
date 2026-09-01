@@ -52,6 +52,8 @@ class DQNAgent:
         lql_trajectory_length: int = 0,
         lql_lambda_lb: float = 1.0,
         lql_lambda_ub: float = 1.0,
+        adjacent_success_trajectory_length: int = 0,
+        adjacent_success_lambda: float = 1.0,
         hidden_dim: int = 256,
         device=None,
         **legacy_options,
@@ -114,12 +116,36 @@ class DQNAgent:
             raise ValueError("LQL hinge weights must be nonnegative")
         self.lql_current_trajectory = []
         self.lql_trajectories = deque(maxlen=int(memory_size))
+        self.adjacent_success_trajectory_length = int(
+            adjacent_success_trajectory_length
+        )
+        self.adjacent_success_lambda = float(adjacent_success_lambda)
+        if self.adjacent_success_trajectory_length < 0:
+            raise ValueError(
+                "adjacent_success_trajectory_length must be nonnegative"
+            )
+        if self.adjacent_success_lambda < 0:
+            raise ValueError("adjacent_success_lambda must be nonnegative")
+        if self.adjacent_success_trajectory_length > 0:
+            speeds = tuple(float(value) for value in env.speed_values)
+            if any(right <= left for left, right in zip(speeds, speeds[1:])):
+                raise ValueError(
+                    "adjacent-success hinge requires strictly increasing speed actions"
+                )
+        self.adjacent_success_current_trajectory = []
+        self.adjacent_success_trajectories = deque(maxlen=int(memory_size))
+        self.adjacent_success_successful_episodes_seen = 0
+        self.adjacent_success_accepted_episodes = 0
+        self.adjacent_success_rejected_regression = 0
         self.last_update_stats = {
             "td_loss": 0.0,
             "lql_lb_loss": 0.0,
             "lql_ub_loss": 0.0,
             "lql_lb_active_fraction": 0.0,
             "lql_ub_active_fraction": 0.0,
+            "adjacent_success_loss": 0.0,
+            "adjacent_success_active_fraction": 0.0,
+            "adjacent_success_comparisons": 0,
         }
 
         self.v_min = float(v_min)
@@ -194,6 +220,40 @@ class DQNAgent:
                 if done:
                     self.lql_trajectories.append(tuple(self.lql_current_trajectory))
                     self.lql_current_trajectory = []
+            if self.adjacent_success_trajectory_length > 0:
+                self.adjacent_success_current_trajectory.append(
+                    (
+                        np.asarray(transition[0], dtype=np.float32).copy(),
+                        int(transition[1]),
+                        float(transition[2]),
+                        np.asarray(transition[3], dtype=np.float32).copy(),
+                        bool(transition[4]),
+                        float(info.get("task_reward", 0.0)),
+                    )
+                )
+                if done:
+                    if (
+                        bool(info.get("success"))
+                        and info.get("physics_error") is None
+                        and info.get("safety_violation") is None
+                    ):
+                        self.adjacent_success_successful_episodes_seen += 1
+                        progress = [
+                            transition[5]
+                            for transition in self.adjacent_success_current_trajectory
+                        ]
+                        nonregressive = all(
+                            later + 1e-9 >= earlier
+                            for earlier, later in zip(progress, progress[1:])
+                        )
+                        if nonregressive:
+                            self.adjacent_success_trajectories.append(
+                                tuple(self.adjacent_success_current_trajectory)
+                            )
+                            self.adjacent_success_accepted_episodes += 1
+                        else:
+                            self.adjacent_success_rejected_regression += 1
+                    self.adjacent_success_current_trajectory = []
             if self.use_n_step:
                 one_step_transition = self.memory_n.store(*transition)
             else:
@@ -226,10 +286,12 @@ class DQNAgent:
             )
         td_loss = torch.mean(elementwise_loss * weights)
         lql_lb, lql_ub, lql_stats = self._compute_lql_loss()
+        adjacent_success, adjacent_stats = self._compute_adjacent_success_loss()
         loss = (
             td_loss
             + self.lql_lambda_lb * lql_lb
             + self.lql_lambda_ub * lql_ub
+            + self.adjacent_success_lambda * adjacent_success
         )
 
         self.optimizer.zero_grad()
@@ -244,7 +306,9 @@ class DQNAgent:
             "td_loss": float(td_loss.detach().item()),
             "lql_lb_loss": float(lql_lb.detach().item()),
             "lql_ub_loss": float(lql_ub.detach().item()),
+            "adjacent_success_loss": float(adjacent_success.detach().item()),
             **lql_stats,
+            **adjacent_stats,
         }
         return float(loss.item())
 
@@ -354,6 +418,58 @@ class DQNAgent:
         return lb_loss, ub_loss, {
             "lql_lb_active_fraction": lb_active,
             "lql_ub_active_fraction": ub_active,
+        }
+
+    def _compute_adjacent_success_loss(self):
+        """Zero-margin L1 hinge for faster actions on safe successful episodes.
+
+        Action indices must follow the strictly increasing speed grid.  For
+        each sampled decision whose action has an adjacent slower action, this
+        penalizes only ``Q(s, slower) > Q(s, chosen)``.  Equality is allowed;
+        no time-saving margin or failed-trajectory ordering is imposed.
+        """
+
+        zero = torch.zeros((), dtype=torch.float32, device=self.device)
+        empty = {
+            "adjacent_success_active_fraction": 0.0,
+            "adjacent_success_comparisons": 0,
+        }
+        if self.adjacent_success_trajectory_length <= 0:
+            return zero, empty
+        eligible = [
+            trajectory for trajectory in self.adjacent_success_trajectories
+            if any(transition[1] > 0 for transition in trajectory)
+        ]
+        if not eligible:
+            return zero, empty
+        trajectory = random.choice(eligible)
+        length = min(self.adjacent_success_trajectory_length, len(trajectory))
+        start = random.randint(0, len(trajectory) - length)
+        chunk = trajectory[start : start + length]
+        faster = [transition for transition in chunk if transition[1] > 0]
+        if not faster:
+            return zero, empty
+
+        states = torch.as_tensor(
+            np.asarray([transition[0] for transition in faster]),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        actions = torch.as_tensor(
+            [transition[1] for transition in faster],
+            dtype=torch.long,
+            device=self.device,
+        )
+        q_values = self.dqn(states)
+        chosen = q_values.gather(1, actions.unsqueeze(1)).squeeze(1)
+        slower = q_values.gather(1, (actions - 1).unsqueeze(1)).squeeze(1)
+        scale = max(self.v_max - self.v_min, 1.0)
+        violations = torch.relu((slower - chosen) / scale)
+        return violations.mean(), {
+            "adjacent_success_active_fraction": float(
+                (violations > 0).float().mean().item()
+            ),
+            "adjacent_success_comparisons": int(violations.numel()),
         }
 
     def decay_epsilon(self, step: int):

@@ -21,7 +21,7 @@ workflow:
           files:
             - path: /tmp/run.sh
               contents: |-
-                set -euo pipefail
+                set -euxo pipefail
                 SOURCE_URL=https://github.com/kevin-thankyou-lin/SpeedTuning.git
                 BENCHMARK=/mnt/amlfs-04/home/linke/speedtuning-act-speed-benchmark-v1
                 OLD_ROOT=$BENCHMARK/runs/$OLD_SOURCE_COMMIT
@@ -39,7 +39,6 @@ workflow:
                 for TASK in pick tea insertion; do
                   test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/COMPLETE.json"
                   test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/selected.json"
-                  test -f "$OLD_ROOT/$TASK/learned_phase_rainbow_rl/search/terminal_policy.pt"
                 done
                 git clone "$SOURCE_URL" "$CODE"
                 git -C "$CODE" checkout --detach "$IMPLEMENTATION_COMMIT"

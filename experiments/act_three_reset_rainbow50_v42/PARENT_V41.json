@@ -1,0 +1,22 @@
+{
+  "schema": "act-three-reset-rainbow50-parent-v41",
+  "workflow": "speedtuning-act-three-reset-rainbow25-v41-1",
+  "implementation_commit": "231fef194fae83d1cc68558c33bc14ea44552b0c",
+  "tasks": {
+    "pick": {
+      "search_complete_sha256": "5f90b9615803b3ed9f8dd2ad2076e5f6dba9ef9b4bdb4e581f4f451add08d5ab",
+      "selection_sha256": "fde98e3cfe6741f5254bdd9ee79da09e6f98c6d03ec4e075d4a48e334e921683",
+      "three_poses_sha256": "1bf559d24afd8757bb0579a1940450015b72dd11f3da08102bfce28840337555"
+    },
+    "tea": {
+      "search_complete_sha256": "ac55f9a9f2e3dffcab7ac1d5f3d9d6d64c170cb56fa97b977f057b28b3fa0a8e",
+      "selection_sha256": "f882b80e90e567fd697f7a73db6c364fd6989901ad3699a73d68eb30707c4d12",
+      "three_poses_sha256": "9fbad86d2b21c944bc7cfab092044cca1cfd01d4dd6556a6a1b6f90a1170d42f"
+    },
+    "insertion": {
+      "search_complete_sha256": "0845396dbf100591166fbe16d78d711c028d1ffb3645aad1bf50afd0738b1780",
+      "selection_sha256": "9127a2392d39767cf04f056a1ebddee36bb9342eb713f95247c39f82f78771c1",
+      "three_poses_sha256": "9d169cb7bc4d308ba563f2bfd5bc796a1c5668bc38373b8ece20329ef701638d"
+    }
+  }
+}

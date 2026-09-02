@@ -37,15 +37,20 @@ workflow:
           PERSIST_ROOT=/mnt/amlfs-01/shared/linke/public/speedtuning-repro-20260901/$EXPERIMENT
           FINAL_RUN=$PERSIST_ROOT/$TASK
           RUN=/osmo/run/artifacts/$TASK
-          OSMO_OUTPUT=/osmo/run/outputs
+          OSMO_OUTPUT=/osmo/run/outputs/$TASK
           CODE=/osmo/run/workspace/SpeedTuning-$TASK
           GEAR_DEST=GearHome/linke/speedtuning/dense500-repro-amlfs01-20260901-r3-objectstage/$TASK
+          GEAR_CREDENTIAL_SOURCE=/mnt/amlfs-07/shared/linke/.tmp/speedtuning-dense500-gear-data_credentials
 
           export MUJOCO_GL=egl
           export MPLBACKEND=Agg
           export PYTHONUNBUFFERED=1
 
           mkdir -p "$RUN/checkpoints" "$RUN/evals/dense_early_curve" "$OSMO_OUTPUT"
+          if test -s "$GEAR_CREDENTIAL_SOURCE"; then
+            install -d -m 700 /root/.gear
+            install -m 600 "$GEAR_CREDENTIAL_SOURCE" /root/.gear/data_credentials
+          fi
           date --iso-8601=seconds | tee "$RUN/started_at.txt"
           nvidia-smi -L | tee "$RUN/gpus.txt"
 

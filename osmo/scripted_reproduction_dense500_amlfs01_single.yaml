@@ -2,12 +2,13 @@ default-values:
   WORKFLOW_TASK: insertion
   TASK: insertion
   PRESET: scripted-insertion
+  TRAINING_SEED: "1"
 
 workflow:
   timeout:
     exec_timeout: 8h
     queue_timeout: 8h
-  name: speedtuning-scripted-repro-dense500-amlfs01-{{ WORKFLOW_TASK }}-20260901-r3-objectstage
+  name: speedtuning-insertion-seed{{ TRAINING_SEED }}-dense500-20260902-r1
   resources:
     default:
       cpu: 10
@@ -26,6 +27,7 @@ workflow:
       environment:
         TASK: {{ TASK }}
         PRESET: {{ PRESET }}
+        TRAINING_SEED: "{{ TRAINING_SEED }}"
       files:
       - path: /tmp/run.sh
         contents: |
@@ -33,13 +35,13 @@ workflow:
 
           SOURCE_URL=https://github.com/DaivdYuan/SpeedTuning.git
           SOURCE_COMMIT=b4a4cfcf65502d8b5133dc0899d036bf940a0b7b
-          EXPERIMENT=scripted_reproduction_upstream_b4a4cfc_dense500_independent_3gpu_r2_localstage
+          EXPERIMENT=scripted_reproduction_upstream_b4a4cfc_insertion_seed_sweep_20260902
           PERSIST_ROOT=/mnt/amlfs-01/shared/linke/public/speedtuning-repro-20260901/$EXPERIMENT
-          FINAL_RUN=$PERSIST_ROOT/$TASK
+          FINAL_RUN=$PERSIST_ROOT/${TASK}_seed${TRAINING_SEED}
           RUN=/osmo/run/artifacts/$TASK
           OSMO_OUTPUT=/osmo/run/outputs/$TASK
           CODE=/osmo/run/workspace/SpeedTuning-$TASK
-          GEAR_DEST=GearHome/linke/speedtuning/dense500-repro-amlfs01-20260901-r3-objectstage/$TASK
+          GEAR_DEST=GearHome/linke/speedtuning/insertion-seed-sweep-20260902/$TASK/seed-${TRAINING_SEED}
           GEAR_CREDENTIAL_SOURCE=/mnt/amlfs-07/shared/linke/.tmp/speedtuning-dense500-gear-data_credentials
 
           export MUJOCO_GL=egl
@@ -69,7 +71,7 @@ workflow:
           TRAIN=$CODE/.venv/bin/speedtuning-train-speed
           EVAL=$CODE/.venv/bin/speedtuning-eval-speed
 
-          export RUN FINAL_RUN TASK PRESET SOURCE_COMMIT GEAR_DEST
+          export RUN FINAL_RUN TASK PRESET SOURCE_COMMIT GEAR_DEST TRAINING_SEED
           "$PYTHON" - <<'PY'
           import json
           import os
@@ -83,7 +85,7 @@ workflow:
               "preset": os.environ["PRESET"],
               "base_policy": "scripted",
               "base_policy_frozen": True,
-              "training_seed": 0,
+              "training_seed": int(os.environ["TRAINING_SEED"]),
               "training_decisions": 100000,
               "checkpoint_interval_decisions": 500,
               "numbered_checkpoint_target": 200,
@@ -120,7 +122,7 @@ workflow:
           "$TRAIN" \
             --config "$PRESET" \
             --task "$TASK" \
-            --seed 0 \
+            --seed "$TRAINING_SEED" \
             --output "$RUN/checkpoints/${TASK}_speed.pt" \
             --report "$RUN/${TASK}_speed.training.json" \
             --device cuda \
@@ -193,6 +195,7 @@ workflow:
               "task": task,
               "preset": os.environ["PRESET"],
               "source_commit": os.environ["SOURCE_COMMIT"],
+              "training_seed": int(os.environ["TRAINING_SEED"]),
               "training_decisions": report["summary"]["decisions"],
               "training_episodes": report["summary"]["episodes"],
               "checkpoint_interval_decisions": 500,
@@ -226,6 +229,7 @@ workflow:
 
           receipt = {
               "task": os.environ["TASK"],
+              "training_seed": int(os.environ["TRAINING_SEED"]),
               "artifact_root": os.environ["FINAL_RUN"],
               "gear_destination": os.environ["GEAR_DEST"],
               "gear_status": os.environ["GEAR_STATUS"],
@@ -258,5 +262,5 @@ workflow:
             "$OSMO_OUTPUT"/
           mkdir -p "$OSMO_OUTPUT/evals"
           cp "$RUN/evals/final_seed100_199.json" "$OSMO_OUTPUT/evals"/
-          echo "SPEEDTUNING_DENSE500_OBJECTSTAGE_COMPLETE task=$TASK final_root=$FINAL_RUN gear_status=$GEAR_STATUS"
+          echo "SPEEDTUNING_INSERTION_SEED_COMPLETE task=$TASK seed=$TRAINING_SEED final_root=$FINAL_RUN gear_status=$GEAR_STATUS"
           cat "$RUN/summary.json"

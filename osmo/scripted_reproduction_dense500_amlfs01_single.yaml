@@ -3,12 +3,13 @@ default-values:
   TASK: insertion
   PRESET: scripted-insertion
   TRAINING_SEED: "1"
+  RUN_REVISION: "2"
 
 workflow:
   timeout:
     exec_timeout: 8h
     queue_timeout: 8h
-  name: speedtuning-insertion-seed{{ TRAINING_SEED }}-dense500-20260902-r1
+  name: speedtuning-insertion-seed{{ TRAINING_SEED }}-dense500-20260902-r{{ RUN_REVISION }}
   resources:
     default:
       cpu: 10
@@ -28,6 +29,7 @@ workflow:
         TASK: {{ TASK }}
         PRESET: {{ PRESET }}
         TRAINING_SEED: "{{ TRAINING_SEED }}"
+        RUN_REVISION: "{{ RUN_REVISION }}"
       files:
       - path: /tmp/run.sh
         contents: |
@@ -41,7 +43,7 @@ workflow:
           RUN=/osmo/run/artifacts/$TASK
           OSMO_OUTPUT=/osmo/run/outputs/$TASK
           CODE=/osmo/run/workspace/SpeedTuning-$TASK
-          GEAR_DEST=GearHome/linke/speedtuning/insertion-seed-sweep-20260902/$TASK/seed-${TRAINING_SEED}
+          GEAR_DEST=GearHome/linke/speedtuning/insertion-seed-sweep-20260902/$TASK/seed-${TRAINING_SEED}-r${RUN_REVISION}
           GEAR_CREDENTIAL_SOURCE=/mnt/amlfs-07/shared/linke/.tmp/speedtuning-dense500-gear-data_credentials
 
           export MUJOCO_GL=egl
@@ -71,7 +73,7 @@ workflow:
           TRAIN=$CODE/.venv/bin/speedtuning-train-speed
           EVAL=$CODE/.venv/bin/speedtuning-eval-speed
 
-          export RUN FINAL_RUN TASK PRESET SOURCE_COMMIT GEAR_DEST TRAINING_SEED
+          export RUN FINAL_RUN TASK PRESET SOURCE_COMMIT GEAR_DEST TRAINING_SEED RUN_REVISION
           "$PYTHON" - <<'PY'
           import json
           import os
@@ -86,6 +88,7 @@ workflow:
               "base_policy": "scripted",
               "base_policy_frozen": True,
               "training_seed": int(os.environ["TRAINING_SEED"]),
+              "run_revision": int(os.environ["RUN_REVISION"]),
               "training_decisions": 100000,
               "checkpoint_interval_decisions": 500,
               "numbered_checkpoint_target": 200,
@@ -211,17 +214,6 @@ workflow:
           PY
 
           date --iso-8601=seconds | tee "$RUN/completed_at.txt"
-          GEAR_STATUS=not_attempted
-          if command -v gear >/dev/null 2>&1; then
-            if gear data upload "$RUN" "$GEAR_DEST"; then
-              GEAR_STATUS=uploaded
-            else
-              GEAR_STATUS=upload_failed
-            fi
-          else
-            GEAR_STATUS=gear_cli_unavailable
-          fi
-          export GEAR_STATUS
           "$PYTHON" - <<'PY'
           import json
           import os
@@ -230,12 +222,13 @@ workflow:
           receipt = {
               "task": os.environ["TASK"],
               "training_seed": int(os.environ["TRAINING_SEED"]),
+              "run_revision": int(os.environ["RUN_REVISION"]),
               "artifact_root": os.environ["FINAL_RUN"],
               "gear_destination": os.environ["GEAR_DEST"],
-              "gear_status": os.environ["GEAR_STATUS"],
+              "gear_upload_contract": "workflow exits nonzero unless upload and remote checkpoint count validate",
               "training_and_evaluation_complete": True,
               "amlfs_publish_status": "deferred_external_due_quota",
-              "complete": False,
+              "complete": True,
           }
           Path(os.environ["RUN"], "terminal_receipt.json").write_text(
               json.dumps(receipt, indent=2, sort_keys=True) + "\n"
@@ -262,5 +255,20 @@ workflow:
             "$OSMO_OUTPUT"/
           mkdir -p "$OSMO_OUTPUT/evals"
           cp "$RUN/evals/final_seed100_199.json" "$OSMO_OUTPUT/evals"/
-          echo "SPEEDTUNING_INSERTION_SEED_COMPLETE task=$TASK seed=$TRAINING_SEED final_root=$FINAL_RUN gear_status=$GEAR_STATUS"
+
+          RSYNC_GEAR_CREDENTIAL=/osmo/run/workspace/gear-local/.gear/data_credentials
+          if test -s "$RSYNC_GEAR_CREDENTIAL"; then
+            install -d -m 700 /root/.gear
+            install -m 600 "$RSYNC_GEAR_CREDENTIAL" /root/.gear/data_credentials
+          fi
+          test -s /root/.gear/data_credentials
+          test "$(stat -c '%a' /root/.gear/data_credentials)" = 600
+          gear data upload "$RUN" "$GEAR_DEST"
+          remote_checkpoint_count=$(
+            gear data list "$GEAR_DEST/checkpoints" \
+              | awk '$NF ~ /\.pt$/ { count += 1 } END { print count + 0 }'
+          )
+          test "$remote_checkpoint_count" -eq 201
+          gear data list "$GEAR_DEST" | grep -q 'summary.json'
+          echo "SPEEDTUNING_INSERTION_SEED_COMPLETE task=$TASK seed=$TRAINING_SEED final_root=$FINAL_RUN gear_status=verified remote_checkpoints=$remote_checkpoint_count"
           cat "$RUN/summary.json"

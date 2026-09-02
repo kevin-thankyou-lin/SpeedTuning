@@ -264,10 +264,18 @@ workflow:
           test -s /root/.gear/data_credentials
           test "$(stat -c '%a' /root/.gear/data_credentials)" = 600
           gear data upload "$RUN" "$GEAR_DEST"
-          remote_checkpoint_count=$(
-            gear data list "$GEAR_DEST/checkpoints" \
-              | awk '$NF ~ /\.pt$/ { count += 1 } END { print count + 0 }'
-          )
+          remote_checkpoint_count=0
+          for attempt in $(seq 1 12); do
+            remote_checkpoint_count=$(
+              gear data list "$GEAR_DEST/checkpoints" \
+                | awk '$NF ~ /\.pt$/ { count += 1 } END { print count + 0 }'
+            )
+            if test "$remote_checkpoint_count" -eq 201; then
+              break
+            fi
+            echo "Waiting for Gear checkpoint listing consistency: attempt=$attempt count=$remote_checkpoint_count"
+            sleep 5
+          done
           test "$remote_checkpoint_count" -eq 201
           gear data list "$GEAR_DEST" | grep -q 'summary.json'
           echo "SPEEDTUNING_INSERTION_SEED_COMPLETE task=$TASK seed=$TRAINING_SEED final_root=$FINAL_RUN gear_status=verified remote_checkpoints=$remote_checkpoint_count"
